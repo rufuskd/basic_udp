@@ -60,19 +60,30 @@ fn handle_inbound(
     };
 
     //A few possible cases
-    //New request - ID of zero, source is arbitrary, buffer contains a filename
-    //Create a new client connection, add it to the map
-    let new_client = ClientConnection {
-        id: *id_count,
-        filename: String::from_utf8_lossy(&p.data).to_string(),
-        startChunk: 0,
-        endChunk: 0,
-        ackChunks: HashSet::new(),
-    };
-    client_vector.insert(*id_count, new_client);
-    *id_count+=1;
-    //Ack for existing client
-    //Update the connection in the map, if it's the last ack, clear em out
+    
+    if p.id == 0 {
+        //New request - ID of zero, source is arbitrary, buffer contains a filename
+        //Create a new client connection, add it to the map
+        let new_client = ClientConnection {
+            id: *id_count,
+            addr: source,
+            filename: String::from_utf8_lossy(&p.data).to_string(),
+            startChunk: 0,
+            endChunk: 0,
+            ackChunks: HashSet::new(),
+        };
+        client_vector.insert(*id_count, new_client);
+        *id_count+=1;
+
+        //Now send back an acknowledgment so they know the download has begun
+
+    } else if client_vector.contains_key(&p.id) {
+        //Ack for existing client
+        //Update the connection in the map, if it's the last ack, clear em out
+    } else {
+        //Not a new request, not an existing client, naughty naughty
+        println!("Received a packet that doesn't match an existing download and isn't a new request");
+    }
 }
 
 //Basic UDP file transfer server
@@ -83,6 +94,7 @@ fn main() -> std::io::Result<()> {
     let mut buffer = [0; 512];
     let mut id_counter: u64 = 1;
     loop {
+        //Handle received packets
         match server_socket.recv_from(&mut buffer) {
             Ok((b,a)) => {
                 let bytes_count = b;
@@ -92,7 +104,7 @@ fn main() -> std::io::Result<()> {
             Err(_) => {
                 continue;
             }
-
         }
+        //And send out whatever we need
     }
 }
