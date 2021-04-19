@@ -4,6 +4,14 @@ use std::collections::HashMap;
 use std::io;
 use std::env;
 
+///Struct representing a client connection for a file
+/// 
+///id: u64,
+///addr: std::net::SocketAddr,
+///filename: String,
+///startChunk: u64,
+///endChunk: u64,
+///ackChunks: HashSet<u64>,
 struct ClientConnection {
     id: u64,
     addr: std::net::SocketAddr,
@@ -13,12 +21,18 @@ struct ClientConnection {
     ackChunks: HashSet<u64>,
 }
 
+///Struct representing a client connection for a file
+/// 
+///id: u64,
+///chunk_id: u64,
+///data: &'a [u8],
 struct UdpTransferPacket<'a> {
     id: u64,
     chunk_id: u64,
     data: &'a [u8],
 }
 
+///Take a u64 and pack it into an owned array of u8
 fn pack_u64_into_u8arr(val: u64) -> [u8;8] {
     //Take a 64 bit integer, pull the byte values into a vector
     let mut working_val = val;
@@ -31,6 +45,7 @@ fn pack_u64_into_u8arr(val: u64) -> [u8;8] {
     retval
 }
 
+//Take a slice of a u8 and return a u64
 fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     //Iterate through the value byte vector backwards and multiply/add
     if val.len() > 8 {
@@ -47,6 +62,7 @@ fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     }
 }
 
+//TODO finish all server inbound cases
 fn server_handle_inbound(
     bytes: usize,
     source: std::net::SocketAddr,
@@ -77,7 +93,7 @@ fn server_handle_inbound(
         client_vector.insert(*id_count, new_client);
         *id_count+=1;
 
-        //Now send back an acknowledgment so they know the download has begun
+        //At this point, the server has enough info to refer back to the client
 
     } else if client_vector.contains_key(&p.id) {
         //Ack for existing client
@@ -88,18 +104,17 @@ fn server_handle_inbound(
     }
 }
 
+//TODO later
 fn server_send_chunks(client: &mut ClientConnection, socket: &mut UdpSocket) {
     //Send file chunks to a client
-    struct ClientConnection {
-        id: u64,
-        addr: std::net::SocketAddr,
-        filename: String,
-        startChunk: u64,
-        endChunk: u64,
-        ackChunks: HashSet<u64>,
-    }
     //Starting naive, open a file, seek according to client connection params
     //Make the packet, send the chunk on the provided socket
+    //Get the id to send back
+    let id = pack_u64_into_u8arr(client.id);
+    //Determine which chunk to send back and store it in a buffer
+    //Pull the chunk and store it in a buffer
+    //Mash all the buffers into one
+    //Send the buffer
 }
 
 fn serve() -> std::io::Result<()> {
