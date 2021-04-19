@@ -1,6 +1,8 @@
 use std::net::UdpSocket;
 use std::collections::HashSet;
 use std::collections::HashMap;
+use std::io;
+use std::env;
 
 struct ClientConnection {
     id: u64,
@@ -45,7 +47,7 @@ fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     }
 }
 
-fn handle_inbound(
+fn server_handle_inbound(
     bytes: usize,
     source: std::net::SocketAddr,
     client_vector: &mut HashMap<u64, ClientConnection>,
@@ -86,25 +88,60 @@ fn handle_inbound(
     }
 }
 
-//Basic UDP file transfer server
-fn main() -> std::io::Result<()> {
+fn server_send_chunks(client: &mut ClientConnection, socket: &mut UdpSocket) {
+    //Send file chunks to a client
+    struct ClientConnection {
+        id: u64,
+        addr: std::net::SocketAddr,
+        filename: String,
+        startChunk: u64,
+        endChunk: u64,
+        ackChunks: HashSet<u64>,
+    }
+    //Starting naive, open a file, seek according to client connection params
+    //Make the packet, send the chunk on the provided socket
+}
+
+fn serve() -> std::io::Result<()> {
     let mut clients: HashMap<u64, ClientConnection> = HashMap::new();
-    let server_socket = UdpSocket::bind("127.0.0.1:9001")?;
-    server_socket.set_nonblocking(true)?;
-    let mut buffer = [0; 512];
-    let mut id_counter: u64 = 1;
-    loop {
-        //Handle received packets
-        match server_socket.recv_from(&mut buffer) {
-            Ok((b,a)) => {
-                let bytes_count = b;
-                let source_address = a;
-                handle_inbound(bytes_count, source_address, &mut clients, buffer, &mut id_counter);
-            },
-            Err(_) => {
-                continue;
+        let server_socket = UdpSocket::bind("127.0.0.1:9001")?;
+        server_socket.set_nonblocking(true)?;
+        let mut buffer = [0; 512];
+        let mut id_counter: u64 = 1;
+        loop {
+            //Handle received packets
+            match server_socket.recv_from(&mut buffer) {
+                Ok((b,a)) => {
+                    let bytes_count = b;
+                    let source_address = a;
+                    server_handle_inbound(bytes_count, source_address, &mut clients, buffer, &mut id_counter);
+                },
+                Err(e) => {
+                    match e.kind() {
+                        io::ErrorKind::WouldBlock => continue,
+                        _ => return Err(e),
+                    }
+                }
+            }
+            //And send out whatever we need
+            for val in clients.values_mut() {
+                server_send_chunks(val);
             }
         }
-        //And send out whatever we need
+}
+
+//Basic UDP file transfer server
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        //Disregard whatever was passed, start a server
+        //Serve files indefinitely until an error happens
+        let result = serve();
+        return result
+    } else {
+        //Run in client mode
+        //Parse a filename, a port, an address
+        //Perform the client portion of transfer
+        Ok(())
     }
 }
