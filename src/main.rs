@@ -3,33 +3,21 @@ use std::collections::HashSet;
 use std::collections::HashMap;
 use std::io;
 use std::env;
+use std::mem;
 
-///Struct representing a client connection for a file
-/// 
-///id: u64,
-///addr: std::net::SocketAddr,
-///filename: String,
-///startChunk: u64,
-///endChunk: u64,
-///ackChunks: HashSet<u64>,
-struct ClientConnection {
-    id: u64,
-    addr: std::net::SocketAddr,
-    filename: String,
-    startChunk: u64,
-    endChunk: u64,
-    ackChunks: HashSet<u64>,
-}
+//Starting out with 512 byte packets
+const PACKET_SIZE: usize = 512;
+//The amount of identifying fields in a packet
+const ID_FIELDS: usize = 2;
+const BUFFER_SIZE: usize = PACKET_SIZE-(ID_FIELDS*mem::size_of::<u64>());
 
-///Struct representing a client connection for a file
+///Struct representing a packet
 /// 
-///id: u64,
-///chunk_id: u64,
-///data: &'a [u8],
-struct UdpTransferPacket<'a> {
-    id: u64,
-    chunk_id: u64,
-    data: &'a [u8],
+///id: [u64;ID_FIELDS],
+///data: [u8;BUFFER_SIZE],
+struct UdpTransferPacket {
+    id: [u64;ID_FIELDS],
+    data: [u8;BUFFER_SIZE],
 }
 
 ///Take a u64 and pack it into an owned array of u8
@@ -62,66 +50,48 @@ fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     }
 }
 
-//TODO finish all server inbound cases
 fn server_handle_inbound(
     bytes: usize,
     source: std::net::SocketAddr,
-    client_vector: &mut HashMap<u64, ClientConnection>,
-    buffer: [u8; 512],
-    id_count: &mut u64) {
+    buffer: [u8; 512],) {
 
-    //Parse the packet
+    //Initialize a packet
     let p: UdpTransferPacket = UdpTransferPacket {
-        id: unpack_u8arr_into_u64(&buffer[0..8]),
-        chunk_id: unpack_u8arr_into_u64(&buffer[8..16]),
-        data: &buffer[16..bytes],
+        id: [0: u64;ID_FIELDS],
+        data: [0: u8;BUFFER_SIZE],
     };
+    //Parse the packet into it
+    p.id[0] = unpack_u8arr_into_u64(&buffer[0..8]);
+    p.id[1] = unpack_u8arr_into_u64(&buffer[8..16]);
+    p.data.copy_from_slice(&buffer[16..bytes]);
 
+    //TODO finish all server inbound cases
     //A few possible cases
-    
-    if p.id == 0 {
-        //New request - ID of zero, source is arbitrary, buffer contains a filename
-        //Create a new client connection, add it to the map
-        let new_client = ClientConnection {
-            id: *id_count,
-            addr: source,
-            filename: String::from_utf8_lossy(&p.data).to_string(),
-            startChunk: 0,
-            endChunk: 0,
-            ackChunks: HashSet::new(),
-        };
-        client_vector.insert(*id_count, new_client);
-        *id_count+=1;
-
-        //At this point, the server has enough info to refer back to the client
-
-    } else if client_vector.contains_key(&p.id) {
-        //Ack for existing client
-        //Update the connection in the map, if it's the last ack, clear em out
-    } else {
-        //Not a new request, not an existing client, naughty naughty
-        println!("Received a packet that doesn't match an existing download and isn't a new request");
-    }
+    //(nonzero,nonzero): Use the key at index, here is its nonce and a bunch of chunk requests
+    //(0,x): differing behavior
+    //(0,0) This is going to be a plaintext request, I give no fucks about security, filename, zeroes, chunks
+    //(0,1) Send me your public key, here is mine
+    //(0,2) Associate this key with a file
+    //(0,3+n) where n is an integer>=0 and 3+n fits in a 64 bit unsigned: Lets start a slow request, I'm passing a filename, key and chunk request
 }
 
-//TODO later
-fn server_send_chunks(client: &mut ClientConnection, socket: &mut UdpSocket) {
+//We have a queue of requests to work with and a key map to deal with
+//fn server_send_chunks(client: &mut ClientConnection, socket: &mut UdpSocket) {
     //Send file chunks to a client
     //Starting naive, open a file, seek according to client connection params
     //Make the packet, send the chunk on the provided socket
     //Get the id to send back
-    let id = pack_u64_into_u8arr(client.id);
     //Determine which chunk to send back and store it in a buffer
     //Pull the chunk and store it in a buffer
     //Mash all the buffers into one
     //Send the buffer
-}
+//}
 
 fn serve() -> std::io::Result<()> {
     let mut clients: HashMap<u64, ClientConnection> = HashMap::new();
         let server_socket = UdpSocket::bind("127.0.0.1:9001")?;
         server_socket.set_nonblocking(true)?;
-        let mut buffer = [0; 512];
+        let mut buffer = [0; BUFFER_SIZE];
         let mut id_counter: u64 = 1;
         loop {
             //Handle received packets
