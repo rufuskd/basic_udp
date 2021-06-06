@@ -152,15 +152,28 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
         for i in 0..*e{
             file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
             file.read_exact(&mut buffer)?;
-            //Data is ready, make a packet out of it
-            let mut p: UdpTransferPacket = UdpTransferPacket {
-                id: Vec::with_capacity(ID_FIELDS),
-                data: Vec::with_capacity(BUFFER_SIZE),
-            };
-            
+            //Data is ready, put it in a buffer
+            let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
+            //Startng simple, just unencrypted chunks
+            let keydex = pack_u64_into_u8arr(0);
+            let chunknum = pack_u64_into_u8arr(*s+i);
+            //TODO very unsophisticated way of packing these, but good enough for now
+            let mut byte_counter: usize = 0;
+            for byte in keydex.iter(){
+                packet_buffer[byte_counter] = *byte;
+                byte_counter+=1;
+            }
+            for byte in chunknum.iter(){
+                packet_buffer[byte_counter] = *byte;
+                byte_counter+=1;
+            }
+            for byte in buffer.iter(){
+                packet_buffer[byte_counter] = *byte;
+                byte_counter+=1;
+            }
+            socket.send_to(&packet_buffer, t.target)?;
         }
     }
-    
 
     Ok(())
 }
@@ -190,7 +203,7 @@ pub fn serve() -> std::io::Result<()> {
         }
         //And service the transaction queue
         for mut val in transactions.iter_mut() {
-            server_send_all_chunks(&mut val, &mut server_socket);
+            server_send_all_chunks(&mut val, &mut server_socket)?;
         }
     }
 }
@@ -198,21 +211,30 @@ pub fn serve() -> std::io::Result<()> {
 pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     //Create the socket using provided params
     let mut server_socket = UdpSocket::bind(target)?;
-    server_socket.set_nonblocking(true)?;
+    //server_socket.set_nonblocking(true)?;
     let mut buffer = [0; PACKET_SIZE];
     //Request the metadata
-    let mut req = UdpTransferPacket {
-        id: Vec::with_capacity(ID_FIELDS),
-        data: Vec::with_capacity(BUFFER_SIZE),
-    };
-    req.id[0] = 0;
-    req.id[1] = 1;
-    req.data = filename.clone().into_bytes();
+    let id1 = pack_u64_into_u8arr(0);
+    let id2 = pack_u64_into_u8arr(0);
+    let fname = filename.clone().into_bytes();
+    let mut byte_counter: usize = 0;
 
-    //Request chunks until we have them all
+    //Request all chunks
+    for byte in id1.iter(){
+        buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    for byte in id2.iter(){
+        buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    for byte in fname.iter(){
+        buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    
+    //Receive chunks (At the moment we're just going to output the chunk numbers)
 
-    //On receipt of a chunk, store it, then update a chunk ledger
-
-    //Reassemble the downloaded file from its chunks
+    //Reassemble the downloaded file from its chunks (Later)
     Ok(())
 }
