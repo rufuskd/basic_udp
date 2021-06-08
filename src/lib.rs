@@ -1,11 +1,12 @@
 use std::collections::VecDeque;
 use std::io;
-use std::io::prelude::*;
-use std::fs::File;
+//use std::io::prelude::*;
+use std::fs;
+//use std::fs::File;
 use std::mem;
 use std::net::UdpSocket;
-use std::io::SeekFrom;
-use std::io::Seek;
+//use std::io::SeekFrom;
+//use std::io::Seek;
 
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
@@ -71,7 +72,7 @@ pub fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
 
 ///Handle inbound request for chunks
 pub fn server_handle_inbound(
-    bytes: usize,
+    _bytes: usize,
     source: std::net::SocketAddr,
     transactions: &mut VecDeque<ChunkTransaction>,
     buffer: [u8; 512],
@@ -83,10 +84,13 @@ pub fn server_handle_inbound(
     };
     //Parse the packet id fields
     for i in 0..ID_FIELDS {
-        p.id[i] = unpack_u8arr_into_u64(&buffer[i * 8..(i * 8) + 8]);
+        p.id.push(unpack_u8arr_into_u64(&buffer[i * 8..((i * 8) + 8)]));
     }
     //parse the packet's data
-    p.data.copy_from_slice(&buffer[ID_FIELDS * 8..bytes]);
+    //p.data.copy_from_slice(&buffer[ID_FIELDS * 8..bytes]);
+    for i in ID_FIELDS*8..512 {
+        p.data.push(buffer[i]);
+    }
 
     //(0,0) This is going to be a plaintext request, I give no fucks about security, filename, zeroes, chunks
     if p.id[0] == 0 && p.id[1] == 0 {
@@ -114,8 +118,11 @@ pub fn server_handle_inbound(
             ends: VecDeque::new(),
         };
 
+        new_transaction.starts.push_back(0);
+        new_transaction.ends.push_back(0);
+
         //Iterate from divider to the end of p.data
-        for i in (divider..bytes).step_by(2 * mem::size_of::<u64>()) {
+        /*for i in (divider..bytes).step_by(2 * mem::size_of::<u64>()) {
             new_transaction
                 .starts
                 .push_back(unpack_u8arr_into_u64(&p.data[i..i + mem::size_of::<u64>()]));
@@ -127,7 +134,7 @@ pub fn server_handle_inbound(
                 new_transaction.starts.back(),
                 new_transaction.ends.back()
             );
-        }
+        }*/
 
         //Push the generated transaction into the main queue
         transactions.push_back(new_transaction);
@@ -141,10 +148,33 @@ pub fn server_handle_inbound(
 pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) -> std::io::Result<()> {
     //Look at this chunk request, send all of its chunks
     //If no chunks were requested, then respond with the total
-    let mut file = File::open(&t.filename)?;
+    //let mut file = File::open(&t.filename)?;
     
-    let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
-    for it in t.starts.iter().zip(t.ends.iter()) {
+    //let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
+    let filesize = fs::metadata(&t.filename).unwrap().len();
+
+    //TODO very unsophisticated way of packing these, but good enough for now
+    //Data is ready, put it in a buffer
+    let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
+    let mut byte_counter: usize = 0;
+    let id1 = pack_u64_into_u8arr(0);
+    let id2 = pack_u64_into_u8arr(0);
+    let chunk_count = pack_u64_into_u8arr(filesize);
+    for byte in id1.iter(){
+        packet_buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    for byte in id2.iter(){
+        packet_buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    for byte in chunk_count.iter(){
+        packet_buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+    socket.send_to(&packet_buffer,t.target)?;
+
+    /*for it in t.starts.iter().zip(t.ends.iter()) {
         let (s,e) = it;
         
         //file.seek(SeekFrom::Start(*s*(BUFFER_SIZE as u64)))?;
@@ -173,7 +203,7 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
             }
             socket.send_to(&packet_buffer, t.target)?;
         }
-    }
+    }*/
 
     Ok(())
 }
@@ -205,12 +235,13 @@ pub fn serve() -> std::io::Result<()> {
         for mut val in transactions.iter_mut() {
             server_send_all_chunks(&mut val, &mut server_socket)?;
         }
+        transactions.clear();
     }
 }
 
 pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     //Create the socket using provided params
-    let mut server_socket = UdpSocket::bind(target)?;
+    let server_socket = UdpSocket::bind("127.0.0.1:3001")?;
     //server_socket.set_nonblocking(true)?;
     let mut buffer = [0; PACKET_SIZE];
     //Request the metadata
@@ -219,7 +250,7 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     let fname = filename.clone().into_bytes();
     let mut byte_counter: usize = 0;
 
-    //Request all chunks
+    //Request metadata
     for byte in id1.iter(){
         buffer[byte_counter] = *byte;
         byte_counter+=1;
@@ -232,9 +263,12 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
         buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-    
-    //Receive chunks (At the moment we're just going to output the chunk numbers)
+    server_socket.send_to(&buffer, target)?;
 
-    //Reassemble the downloaded file from its chunks (Later)
+    //Receive metadata
+    server_socket.recv(&mut buffer)?;
+    println!("File length is: {:?}",unpack_u8arr_into_u64(&buffer[16..24]));
+    //TODO Reassemble the downloaded file from its chunks (Later)
+    
     Ok(())
 }
