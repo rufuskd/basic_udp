@@ -12,7 +12,7 @@ fn main() -> std::io::Result<()> {
         return result;
     } else if args.len() == 3 {
         //Run in client mode
-        //Parse a filename, a port, an address
+        //Parse a filename, a port:address
         //Perform the client portion of transfer
         let result = basic_udp::request(&args[1], &args[2]);
         return result;
