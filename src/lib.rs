@@ -65,7 +65,6 @@ pub fn server_handle_inbound(
     transactions: &mut VecDeque<ChunkTransaction>,
     buffer: [u8; 512],
 ) {
-
     //Get packet data, starting with the id field
     let mut byte_counter: usize = 0;
     let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter * 8..((byte_counter * 8) + 8)]);
@@ -125,9 +124,13 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
     //Look at this chunk request, send all of its chunks
     //If no chunks were requested, then respond with the total
     //let mut file = File::open(&t.filename)?;
-    
+    let filesize: u64;
     //let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
-    let filesize = fs::metadata(&t.filename).unwrap().len();
+    match fs::metadata(&t.filename) {
+        Ok(m) => filesize = m.len(),
+        Err(_) => filesize = 0,
+    }
+    //let filesize = fs::metadata(&t.filename).unwrap().len();
 
     //TODO very unsophisticated way of packing these, but good enough for now
     //Data is ready, put it in a buffer
@@ -209,7 +212,10 @@ pub fn serve() -> std::io::Result<()> {
         }
         //And service the transaction queue
         for mut val in transactions.iter_mut() {
-            server_send_all_chunks(&mut val, &mut server_socket)?;
+            match server_send_all_chunks(&mut val, &mut server_socket) {
+                Ok(_) => {},
+                Err(_) => println!("Error sending chunks for {:?}", val.filename),
+            }
         }
         transactions.clear();
     }
