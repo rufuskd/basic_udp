@@ -11,19 +11,7 @@ use std::net::UdpSocket;
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
 const PACKET_SIZE: usize = 512;
-///The amount of identifying fields in a packet
-const ID_FIELDS: usize = 2;
-///Packet size minus fields*size of fields
-const BUFFER_SIZE: usize = PACKET_SIZE - (ID_FIELDS * mem::size_of::<u64>());
-
-///Struct representing a packet
-///
-///id: Vec<u64>,
-///data: Vec<u8>,
-pub struct UdpTransferPacket {
-    id: Vec<u64>,
-    data: Vec<u8>,
-}
+const BUFFER_SIZE: usize = PACKET_SIZE - mem::size_of::<u64>();
 
 ///Struct representing a request for data chunks
 ///
@@ -72,42 +60,30 @@ pub fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
 
 ///Handle inbound request for chunks
 pub fn server_handle_inbound(
-    _bytes: usize,
+    bytes: usize,
     source: std::net::SocketAddr,
     transactions: &mut VecDeque<ChunkTransaction>,
     buffer: [u8; 512],
 ) {
-    //Initialize a packet
-    let mut p: UdpTransferPacket = UdpTransferPacket {
-        id: Vec::with_capacity(ID_FIELDS),
-        data: Vec::with_capacity(BUFFER_SIZE),
-    };
-    //Parse the packet id fields
-    for i in 0..ID_FIELDS {
-        p.id.push(unpack_u8arr_into_u64(&buffer[i * 8..((i * 8) + 8)]));
-    }
-    //parse the packet's data
-    //p.data.copy_from_slice(&buffer[ID_FIELDS * 8..bytes]);
-    for i in ID_FIELDS*8..512 {
-        p.data.push(buffer[i]);
+
+    //Get packet data, starting with the id field
+    let mut byte_counter: usize = 0;
+    let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter * 8..((byte_counter * 8) + 8)]);
+    byte_counter+=1;
+
+    //Get the packet's data
+    let mut data: Vec<u8> = Vec::with_capacity(BUFFER_SIZE);
+    for i in byte_counter*8..bytes {
+        data.push(buffer[i]);
     }
 
-    //(0,0) This is going to be a plaintext request, I give no fucks about security, filename, zeroes, chunks
-    if p.id[0] == 0 && p.id[1] == 0 {
+    //0 This is going to be a plaintext request, I give no fucks about security, filename, zeroes, chunks
+    if id == 0 {
         //Parse a filename and chunk requests
-        //Null terminated string
-        //Find the first null, everything before it is filename, everything after is beginning:end pairs
-        let divider: usize;
-
-        match p.data.iter().position(|&x| x == 0) {
-            Some(x) => divider = x,
-            None => {
-                println!("Uh oh, couldn't parse a filename, quitting");
-                return;
-            }
-        }
-
-        let filename = String::from_utf8_lossy(&p.data[0..divider]);
+        //First grab the u8 representing filename length
+        let namelen: usize = data[0] as usize;
+        let filename = String::from_utf8_lossy(&data[1..namelen+1]);
+        
         println!("Pulling chunks from {}", filename);
 
         //Now populate the chunk starts and ends
@@ -245,20 +221,20 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     //server_socket.set_nonblocking(true)?;
     let mut buffer = [0; PACKET_SIZE];
     //Request the metadata
-    let id1 = pack_u64_into_u8arr(0);
-    let id2 = pack_u64_into_u8arr(0);
+    let id = pack_u64_into_u8arr(0);
     let fname = filename.clone().into_bytes();
+    let fname_length: u8 = fname.len() as u8;
     let mut byte_counter: usize = 0;
 
     //Request metadata
-    for byte in id1.iter(){
+    for byte in id.iter(){
         buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-    for byte in id2.iter(){
-        buffer[byte_counter] = *byte;
-        byte_counter+=1;
-    }
+
+    buffer[byte_counter] = fname_length;
+    byte_counter+=1;
+
     for byte in fname.iter(){
         buffer[byte_counter] = *byte;
         byte_counter+=1;
