@@ -5,10 +5,10 @@ use std::env;
 //Basic UDP file transfer server
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() == 1 {
+    if args.len() == 2 {
         //Disregard whatever was passed, start a server
         //Serve files indefinitely until an error happens
-        let result = basic_udp::serve();
+        let result = basic_udp::serve(&args[1]);
         return result;
     } else if args.len() == 3 {
         //Run in client mode

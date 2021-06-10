@@ -151,7 +151,14 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
         packet_buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-    socket.send_to(&packet_buffer,t.target)?;
+    match socket.send_to(&packet_buffer,t.target)
+    {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Unable to send data to {:?}.  Error:{:?}",t.target,e);
+            return Err(e)
+        }
+    }
 
     /*for it in t.starts.iter().zip(t.ends.iter()) {
         let (s,e) = it;
@@ -187,10 +194,25 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
     Ok(())
 }
 
-pub fn serve() -> std::io::Result<()> {
+pub fn serve(bind_address: &String) -> std::io::Result<()> {
     let mut transactions: VecDeque<ChunkTransaction> = VecDeque::new();
-    let mut server_socket = UdpSocket::bind("127.0.0.1:9001")?;
-    server_socket.set_nonblocking(true)?;
+    let mut server_socket: UdpSocket;
+    match UdpSocket::bind(bind_address)
+    {
+        Ok(s) => server_socket = s,
+        Err(e) => {
+            println!("Unable to bind a UDP socket {:?}. Error:{:?}",bind_address,e);
+            return Err(e);
+        }
+    }
+    match server_socket.set_nonblocking(true)
+    {
+        Ok(_) => {},
+        Err(_) => {
+            println!("Unable to set nonblocking. Performance will be terrible");
+        }
+    }
+
     let mut buffer = [0; PACKET_SIZE];
     loop {
         //Handle received packets
@@ -223,7 +245,15 @@ pub fn serve() -> std::io::Result<()> {
 
 pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     //Create the socket using provided params
-    let server_socket = UdpSocket::bind("127.0.0.1:3001")?;
+    let server_socket: UdpSocket;
+    match UdpSocket::bind("0.0.0.0:0")
+    {
+        Ok(s) => server_socket = s,
+        Err(e) => {
+            println!("Unable to bind a UDP socket. Error:{:?}",e);
+            return Err(e);
+        }
+    }
     //server_socket.set_nonblocking(true)?;
     let mut buffer = [0; PACKET_SIZE];
     //Request the metadata
@@ -245,10 +275,20 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
         buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-    server_socket.send_to(&buffer, target)?;
+    
+    match server_socket.send_to(&buffer, target)
+    {
+        Ok(_) => {},
+        Err(e) => println!("Unable to send data to {:?}.  Error: {:?}",target, e)
+    }
 
     //Receive metadata
-    server_socket.recv(&mut buffer)?;
+    match server_socket.recv(&mut buffer)
+    {
+        Ok(_) => {},
+        Err(e) => println!("Unable to receive data.  Error: {:?}", e)
+    }
+    
     println!("File length is: {:?}",unpack_u8arr_into_u64(&buffer[16..24]));
     //TODO Reassemble the downloaded file from its chunks (Later)
     
