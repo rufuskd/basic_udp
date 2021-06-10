@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::io;
-//use std::io::prelude::*;
+use std::io::prelude::*;
 use std::fs;
-//use std::fs::File;
+use std::fs::File;
 use std::mem;
 use std::net::UdpSocket;
 //use std::io::SeekFrom;
@@ -128,7 +128,12 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
     //let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
     match fs::metadata(&t.filename) {
         Ok(m) => {
-            filesize = m.len();
+            if m.len() % (BUFFER_SIZE as u64) == 0{
+                filesize = m.len()/(BUFFER_SIZE as u64);
+            } else {
+                filesize = 1+m.len()/(BUFFER_SIZE as u64);
+            }
+            
             println!("File {:?} found!",t.filename)
         }
         Err(_) => {
@@ -141,16 +146,12 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
     let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
     let mut byte_counter: usize = 0;
     let id1 = pack_u64_into_u8arr(0);
-    let id2 = pack_u64_into_u8arr(0);
     let chunk_count = pack_u64_into_u8arr(filesize);
     for byte in id1.iter(){
         packet_buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-    for byte in id2.iter(){
-        packet_buffer[byte_counter] = *byte;
-        byte_counter+=1;
-    }
+
     for byte in chunk_count.iter(){
         packet_buffer[byte_counter] = *byte;
         byte_counter+=1;
@@ -164,6 +165,7 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
         }
     }
 
+    //TODO fix the grabbing of chunks
     /*for it in t.starts.iter().zip(t.ends.iter()) {
         let (s,e) = it;
         
@@ -250,6 +252,7 @@ pub fn serve(bind_address: &String) -> std::io::Result<()> {
 pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     //Create the socket using provided params
     let server_socket: UdpSocket;
+    let mut chunk_vector: Vec<u8> = Vec::new();
     match UdpSocket::bind("0.0.0.0:0")
     {
         Ok(s) => server_socket = s,
@@ -309,9 +312,81 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
         }
     }
     
+    let chunk_count = unpack_u8arr_into_u64(&buffer[8..16]);
+    let mut next_chunk: u64 = 0;
+    println!("File length is: {:?} chunks",unpack_u8arr_into_u64(&buffer[8..16]));
 
-    println!("File length is: {:?}",unpack_u8arr_into_u64(&buffer[16..24]));
-    //TODO Reassemble the downloaded file from its chunks (Later)
+    //Request chunks until we have the whole file
+    loop {
+        let id = pack_u64_into_u8arr(1);
+        byte_counter = 0;
+        //Request metadata
+        for byte in id.iter(){
+            buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        buffer[byte_counter] = fname_length;
+        byte_counter+=1;
+
+        for byte in fname.iter(){
+            buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        for byte in pack_u64_into_u8arr(next_chunk).iter(){
+            buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        for byte in pack_u64_into_u8arr(next_chunk).iter(){
+            buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+        
+        match server_socket.send_to(&buffer, target)
+        {
+            Ok(_) => {},
+            Err(e) => {
+                println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+                return Err(e)
+            }
+        }
+
+        //Receive a chunk
+        let mut counter = 0;
+        loop
+        {
+            
+            match server_socket.recv(&mut buffer)
+            {
+                Ok(_) => {
+                    next_chunk += 1;
+                    break;
+                },
+                Err(e) => match e.kind() {
+                    io::ErrorKind::WouldBlock => {
+                        if counter < 1000 {
+                            counter += 1;
+                        } else {
+                            break;
+                        }
+                    },
+                    _ => return Err(e),
+                }
+            }
+        }
+        for byte in buffer.iter() {
+            chunk_vector.push(*byte);
+        }
+        if next_chunk > chunk_count{
+            break;
+        }
+    }
     
+    //Iterate over the chunk vector and make a file!
+    let mut outfile = File::open("Testout")?;
+    outfile.write(&chunk_vector[..])?;
+
     Ok(())
 }
