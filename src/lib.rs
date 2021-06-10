@@ -83,7 +83,7 @@ pub fn server_handle_inbound(
         let namelen: usize = data[0] as usize;
         let filename = String::from_utf8_lossy(&data[1..namelen+1]);
         
-        println!("Pulling chunks from {}", filename);
+        println!("Request received for {}", filename);
 
         //Now populate the chunk starts and ends
         let mut new_transaction = ChunkTransaction {
@@ -127,12 +127,16 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
     let filesize: u64;
     //let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
     match fs::metadata(&t.filename) {
-        Ok(m) => filesize = m.len(),
-        Err(_) => filesize = 0,
+        Ok(m) => {
+            filesize = m.len();
+            println!("File {:?} found!",t.filename)
+        }
+        Err(_) => {
+            filesize = 0;
+            println!("File {:?} not found",t.filename)
+        }
     }
-    //let filesize = fs::metadata(&t.filename).unwrap().len();
 
-    //TODO very unsophisticated way of packing these, but good enough for now
     //Data is ready, put it in a buffer
     let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
     let mut byte_counter: usize = 0;
@@ -254,7 +258,14 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
             return Err(e);
         }
     }
-    //server_socket.set_nonblocking(true)?;
+    match server_socket.set_nonblocking(true)
+    {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Unable to set nonblocking, error: {:?}",e);
+            return Err(e)
+        }
+    }
     let mut buffer = [0; PACKET_SIZE];
     //Request the metadata
     let id = pack_u64_into_u8arr(0);
@@ -279,16 +290,26 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     match server_socket.send_to(&buffer, target)
     {
         Ok(_) => {},
-        Err(e) => println!("Unable to send data to {:?}.  Error: {:?}",target, e)
+        Err(e) => {
+            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+            return Err(e)
+        }
     }
 
     //Receive metadata
-    match server_socket.recv(&mut buffer)
+    loop
     {
-        Ok(_) => {},
-        Err(e) => println!("Unable to receive data.  Error: {:?}", e)
+        match server_socket.recv(&mut buffer)
+        {
+            Ok(_) => {break},
+            Err(e) => match e.kind() {
+                io::ErrorKind::WouldBlock => continue,
+                _ => return Err(e),
+            }
+        }
     }
     
+
     println!("File length is: {:?}",unpack_u8arr_into_u64(&buffer[16..24]));
     //TODO Reassemble the downloaded file from its chunks (Later)
     
