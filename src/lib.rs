@@ -5,8 +5,8 @@ use std::fs;
 use std::fs::File;
 use std::mem;
 use std::net::UdpSocket;
-//use std::io::SeekFrom;
-//use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Seek;
 
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
@@ -83,7 +83,30 @@ pub fn server_handle_inbound(
         let namelen: usize = data[0] as usize;
         let filename = String::from_utf8_lossy(&data[1..namelen+1]);
         
-        println!("Request received for {}", filename);
+        println!("Metadata request received for {}", filename);
+
+        //Now populate the chunk starts and ends
+        let new_transaction = ChunkTransaction {
+            filename: String::from(filename),
+            target: source,
+            starts: VecDeque::new(),
+            ends: VecDeque::new(),
+        };
+
+        //Push the generated transaction into the main queue
+        transactions.push_back(new_transaction);
+    } else if id == 1 {
+        //Parse a filename and chunk requests
+        //First grab the u8 representing filename length
+        let mut byte_counter = 0;
+        let namelen: usize = data[byte_counter] as usize;
+        byte_counter+=1;
+        let filename = String::from_utf8_lossy(&data[byte_counter..byte_counter+namelen]);
+        byte_counter+=namelen;
+        let interval_count: u64 = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
+        byte_counter+=8;
+        
+        println!("Chunk request received for {}", filename);
 
         //Now populate the chunk starts and ends
         let mut new_transaction = ChunkTransaction {
@@ -93,24 +116,12 @@ pub fn server_handle_inbound(
             ends: VecDeque::new(),
         };
 
-        new_transaction.starts.push_back(0);
-        new_transaction.ends.push_back(0);
-
-        //Iterate from divider to the end of p.data
-        /*for i in (divider..bytes).step_by(2 * mem::size_of::<u64>()) {
-            new_transaction
-                .starts
-                .push_back(unpack_u8arr_into_u64(&p.data[i..i + mem::size_of::<u64>()]));
-            new_transaction
-                .ends
-                .push_back(unpack_u8arr_into_u64(&p.data[i..i + mem::size_of::<u64>()]));
-            println!(
-                "Got a chunk request from {:?} to {:?}",
-                new_transaction.starts.back(),
-                new_transaction.ends.back()
-            );
-        }*/
-
+        for _ in 0..interval_count {
+            new_transaction.starts.push_back(unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]));
+            byte_counter+=8;
+            new_transaction.ends.push_back(unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]));
+            byte_counter+=8;
+        }
         //Push the generated transaction into the main queue
         transactions.push_back(new_transaction);
     } else {
@@ -119,84 +130,90 @@ pub fn server_handle_inbound(
 }
 
 
-//We have a queue of requests to work with
+//This function is to service transactions
 pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) -> std::io::Result<()> {
-    //Look at this chunk request, send all of its chunks
-    //If no chunks were requested, then respond with the total
-    //let mut file = File::open(&t.filename)?;
-    let filesize: u64;
-    //let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
-    match fs::metadata(&t.filename) {
-        Ok(m) => {
-            if m.len() % (BUFFER_SIZE as u64) == 0{
-                filesize = m.len()/(BUFFER_SIZE as u64);
-            } else {
-                filesize = 1+m.len()/(BUFFER_SIZE as u64);
+    
+    //This is either a metadata request, or a chunk request
+    if t.starts.len() == 0{
+        let filesize: u64;
+        match fs::metadata(&t.filename) {
+            Ok(m) => {
+                if m.len() % (BUFFER_SIZE as u64) == 0{
+                    filesize = m.len()/(BUFFER_SIZE as u64);
+                } else {
+                    filesize = 1+m.len()/(BUFFER_SIZE as u64);
+                }
+                
+                println!("File {:?} found!",t.filename)
             }
-            
-            println!("File {:?} found!",t.filename)
+            Err(_) => {
+                filesize = 0;
+                println!("File {:?} not found",t.filename)
+            }
         }
-        Err(_) => {
-            filesize = 0;
-            println!("File {:?} not found",t.filename)
+
+        //Metadata is ready, put it in a buffer
+        let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
+        let mut byte_counter: usize = 0;
+        let id1 = pack_u64_into_u8arr(0);
+        let chunk_count = pack_u64_into_u8arr(filesize);
+        for byte in id1.iter(){
+            packet_buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        for byte in chunk_count.iter(){
+            packet_buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        //Send the packet
+        match socket.send_to(&packet_buffer,t.target)
+        {
+            Ok(_) => {},
+            Err(e) => {
+                println!("Unable to send data to {:?}.  Error:{:?}",t.target,e);
+                return Err(e)
+            }
+        }
+    } else {
+        let mut file = File::open(&t.filename)?;
+        let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
+        //Look through all requested chunks and grab em
+        for it in t.starts.iter().zip(t.ends.iter()) {
+            let (s,e) = it;
+            file.seek(SeekFrom::Start(*s*(BUFFER_SIZE as u64)))?;
+            //iterate from 0 to *e, make a packet and send it
+            for i in 0..*e{
+                file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
+                file.read_exact(&mut buffer)?;
+                //Data is ready, put it in a buffer
+                let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
+                //Starting simple, just unencrypted chunks
+                let chunknum = pack_u64_into_u8arr((*s+i)*(BUFFER_SIZE as u64));
+                //TODO very unsophisticated way of packing these, but good enough for now
+                let mut byte_counter: usize = 0;
+                for byte in chunknum.iter(){
+                    packet_buffer[byte_counter] = *byte;
+                    byte_counter+=1;
+                }
+                for byte in buffer.iter(){
+                    packet_buffer[byte_counter] = *byte;
+                    byte_counter+=1;
+                }
+                //Send the packet
+                match socket.send_to(&packet_buffer,t.target)
+                {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("Unable to send data to {:?}.  Error:{:?}",t.target,e);
+                        return Err(e)
+                    }
+                }
+            }
         }
     }
-
-    //Data is ready, put it in a buffer
-    let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
-    let mut byte_counter: usize = 0;
-    let id1 = pack_u64_into_u8arr(0);
-    let chunk_count = pack_u64_into_u8arr(filesize);
-    for byte in id1.iter(){
-        packet_buffer[byte_counter] = *byte;
-        byte_counter+=1;
-    }
-
-    for byte in chunk_count.iter(){
-        packet_buffer[byte_counter] = *byte;
-        byte_counter+=1;
-    }
-    match socket.send_to(&packet_buffer,t.target)
-    {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Unable to send data to {:?}.  Error:{:?}",t.target,e);
-            return Err(e)
-        }
-    }
-
-    //TODO fix the grabbing of chunks
-    /*for it in t.starts.iter().zip(t.ends.iter()) {
-        let (s,e) = it;
-        
-        //file.seek(SeekFrom::Start(*s*(BUFFER_SIZE as u64)))?;
-        //iterate from 0 to *e, make a packet and send it
-        for i in 0..*e{
-            file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
-            file.read_exact(&mut buffer)?;
-            //Data is ready, put it in a buffer
-            let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
-            //Startng simple, just unencrypted chunks
-            let keydex = pack_u64_into_u8arr(0);
-            let chunknum = pack_u64_into_u8arr(*s+i);
-            //TODO very unsophisticated way of packing these, but good enough for now
-            let mut byte_counter: usize = 0;
-            for byte in keydex.iter(){
-                packet_buffer[byte_counter] = *byte;
-                byte_counter+=1;
-            }
-            for byte in chunknum.iter(){
-                packet_buffer[byte_counter] = *byte;
-                byte_counter+=1;
-            }
-            for byte in buffer.iter(){
-                packet_buffer[byte_counter] = *byte;
-                byte_counter+=1;
-            }
-            socket.send_to(&packet_buffer, t.target)?;
-        }
-    }*/
-
+    
     Ok(())
 }
 
@@ -318,27 +335,36 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
 
     //Request chunks until we have the whole file
     loop {
-        let id = pack_u64_into_u8arr(1);
         byte_counter = 0;
-        //Request metadata
-        for byte in id.iter(){
+        //Request metadata (ID of 1)
+        for byte in pack_u64_into_u8arr(1).iter(){
             buffer[byte_counter] = *byte;
             byte_counter+=1;
         }
 
+        //Length of file
         buffer[byte_counter] = fname_length;
         byte_counter+=1;
 
+        //The actual filename
         for byte in fname.iter(){
             buffer[byte_counter] = *byte;
             byte_counter+=1;
         }
 
+        //Just 1 start/end
+        for byte in pack_u64_into_u8arr(1).iter(){
+            buffer[byte_counter] = *byte;
+            byte_counter+=1;
+        }
+
+        //The current chunk is all we're requesting
         for byte in pack_u64_into_u8arr(next_chunk).iter(){
             buffer[byte_counter] = *byte;
             byte_counter+=1;
         }
 
+        //Start and end at the same spot for 1 chunk
         for byte in pack_u64_into_u8arr(next_chunk).iter(){
             buffer[byte_counter] = *byte;
             byte_counter+=1;
@@ -353,11 +379,10 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
             }
         }
 
-        //Receive a chunk
+        //Receive all chunks one at a time
         let mut counter = 0;
         loop
         {
-            
             match server_socket.recv(&mut buffer)
             {
                 Ok(_) => {
@@ -366,7 +391,7 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
                 },
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => {
-                        if counter < 1000 {
+                        if counter < 100000 {
                             counter += 1;
                         } else {
                             break;
@@ -386,7 +411,7 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
     
     //Iterate over the chunk vector and make a file!
     let mut outfile = File::open("Testout")?;
-    outfile.write(&chunk_vector[..])?;
+    outfile.write_all(&chunk_vector[..])?;
 
     Ok(())
 }
