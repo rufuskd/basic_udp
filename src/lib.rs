@@ -117,10 +117,13 @@ pub fn server_handle_inbound(
         };
 
         for _ in 0..interval_count {
-            new_transaction.starts.push_back(unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]));
+            let start = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
             byte_counter+=8;
-            new_transaction.ends.push_back(unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]));
+            let end = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
             byte_counter+=8;
+            //println!("Pushing a chunk range start:{:?} end:{:?}",start,end);
+            new_transaction.starts.push_back(start);
+            new_transaction.ends.push_back(end);
         }
         //Push the generated transaction into the main queue
         transactions.push_back(new_transaction);
@@ -186,7 +189,8 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
             //iterate from 0 to *e, make a packet and send it
             for i in 0..*e{
                 file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
-                file.read_exact(&mut buffer)?;
+                //file.read_exact(&mut buffer)?;
+                file.read(&mut buffer)?;
                 //Data is ready, put it in a buffer
                 let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
                 //Starting simple, just unencrypted chunks
@@ -213,7 +217,7 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -365,7 +369,7 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
         }
 
         //Start and end at the same spot for 1 chunk
-        for byte in pack_u64_into_u8arr(next_chunk).iter(){
+        for byte in pack_u64_into_u8arr(next_chunk+1).iter(){
             buffer[byte_counter] = *byte;
             byte_counter+=1;
         }
@@ -401,16 +405,17 @@ pub fn request(target: &String, filename: &String) -> std::io::Result<()> {
                 }
             }
         }
-        for byte in buffer.iter() {
+
+        for byte in buffer[8..].iter() {
             chunk_vector.push(*byte);
         }
-        if next_chunk > chunk_count{
+        if next_chunk >= chunk_count{
             break;
         }
     }
     
     //Iterate over the chunk vector and make a file!
-    let mut outfile = File::open("Testout")?;
+    let mut outfile = File::create("Testout")?;
     outfile.write_all(&chunk_vector[..])?;
 
     Ok(())
