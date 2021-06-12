@@ -66,12 +66,12 @@ pub fn server_handle_inbound(
 ) {
     //Get packet data, starting with the id field
     let mut byte_counter: usize = 0;
-    let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter * 8..((byte_counter * 8) + 8)]);
-    byte_counter+=1;
+    let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter..byte_counter + 8]);
+    byte_counter+=8;
 
     //Get the packet's data
     let mut data: Vec<u8> = Vec::with_capacity(BUFFER_SIZE);
-    for i in byte_counter*8..bytes {
+    for i in byte_counter..bytes {
         data.push(buffer[i]);
     }
 
