@@ -57,73 +57,87 @@ pub fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     }
 }
 
-///Handle inbound request for chunks
+///Turn an inbound request into a metadata transaction and add it to the server's transacton queue
+pub fn add_metadata_transaction(data: &Vec<u8>, source: std::net::SocketAddr, transactions: &mut VecDeque<ChunkTransaction>) {
+    //Parse a filename and chunk requests
+    //First grab the u8 representing filename length
+    let namelen: usize = data[0] as usize;
+    let filename = String::from_utf8_lossy(&data[1..1+namelen]);
+    
+    println!("Metadata request received for {}", filename);
+
+    //Now populate the chunk starts and ends
+    let new_transaction = ChunkTransaction {
+        filename: String::from(filename),
+        target: source,
+        starts: VecDeque::new(),
+        ends: VecDeque::new(),
+    };
+
+    transactions.push_back(new_transaction);
+}
+
+///Turn an inbound request into a chunk transaction and add it to the server's transacton queue
+pub fn add_chunk_transaction(data: &Vec<u8>, source: std::net::SocketAddr, transactions: &mut VecDeque<ChunkTransaction>) {
+    //Parse a filename and chunk requests
+    //First grab the u8 representing filename length
+    let mut byte_counter = 0;
+    let namelen: usize = data[byte_counter] as usize;
+    byte_counter+=1;
+    let filename = String::from_utf8_lossy(&data[byte_counter..byte_counter+namelen]);
+    byte_counter+=namelen;
+    let interval_count: u64 = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
+    byte_counter+=8;
+
+    //Now populate the chunk starts and ends
+    let mut new_transaction = ChunkTransaction {
+        filename: String::from(filename),
+        target: source,
+        starts: VecDeque::new(),
+        ends: VecDeque::new(),
+    };
+
+    for _ in 0..interval_count {
+        let start = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
+        byte_counter+=8;
+        let end = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
+        byte_counter+=8;
+        new_transaction.starts.push_back(start);
+        new_transaction.ends.push_back(end);
+    }
+    //Push the generated transaction into the main queue
+    transactions.push_back(new_transaction);
+}
+
+///Handle inbound requests
 pub fn server_handle_inbound(
     bytes: usize,
     source: std::net::SocketAddr,
     transactions: &mut VecDeque<ChunkTransaction>,
     buffer: &[u8],
 ) {
-    //Get packet data, starting with the id field
+    //Variable used in byte packing
     let mut byte_counter: usize = 0;
+    //Get packet ID, this determines what type of request the packet is
     let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter..byte_counter + 8]);
     byte_counter+=8;
 
-    //Get the packet's data
+    //Get the packet's data, stash it in a vector for easy use
     let mut data: Vec<u8> = Vec::with_capacity(BUFFER_SIZE);
     for i in byte_counter..bytes {
         data.push(buffer[i]);
     }
 
-    //0 This is going to be a plaintext request, I give no fucks about security, filename, zeroes, chunks
+    //0 This is going to be a plaintext metadata request
     if id == 0 {
-        //Parse a filename and chunk requests
-        //First grab the u8 representing filename length
-        let namelen: usize = data[0] as usize;
-        let filename = String::from_utf8_lossy(&data[1..namelen+1]);
-        
-        println!("Metadata request received for {}", filename);
-
-        //Now populate the chunk starts and ends
-        let new_transaction = ChunkTransaction {
-            filename: String::from(filename),
-            target: source,
-            starts: VecDeque::new(),
-            ends: VecDeque::new(),
-        };
-
-        //Push the generated transaction into the main queue
-        transactions.push_back(new_transaction);
-    } else if id == 1 {
-        //Parse a filename and chunk requests
-        //First grab the u8 representing filename length
-        let mut byte_counter = 0;
-        let namelen: usize = data[byte_counter] as usize;
-        byte_counter+=1;
-        let filename = String::from_utf8_lossy(&data[byte_counter..byte_counter+namelen]);
-        byte_counter+=namelen;
-        let interval_count: u64 = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
-        byte_counter+=8;
-
-        //Now populate the chunk starts and ends
-        let mut new_transaction = ChunkTransaction {
-            filename: String::from(filename),
-            target: source,
-            starts: VecDeque::new(),
-            ends: VecDeque::new(),
-        };
-
-        for _ in 0..interval_count {
-            let start = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
-            byte_counter+=8;
-            let end = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
-            byte_counter+=8;
-            new_transaction.starts.push_back(start);
-            new_transaction.ends.push_back(end);
-        }
-        //Push the generated transaction into the main queue
-        transactions.push_back(new_transaction);
-    } else {
+        add_metadata_transaction(&data, source, transactions);
+    } 
+    //1 This is going to be a plaintext chunk request
+    else if id == 1 {
+        add_chunk_transaction(&data, source, transactions);
+    }
+    //This is some other type of request that isn't implemeneted, output an error
+    else {
         println!("Got a request type that isn't implemented yet!");
     }
 }
