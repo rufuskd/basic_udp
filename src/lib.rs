@@ -1,12 +1,14 @@
-use std::collections::VecDeque;
 use std::io;
 use std::io::prelude::*;
+use std::io::SeekFrom;
+use std::io::Seek;
 use std::fs;
 use std::fs::File;
 use std::mem;
+use std::convert::TryInto;
 use std::net::UdpSocket;
-use std::io::SeekFrom;
-use std::io::Seek;
+use std::collections::VecDeque;
+
 
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
@@ -29,32 +31,15 @@ pub struct ChunkTransaction {
 ///Endian agnostic, flexible for a variety of internal representations
 pub fn pack_u64_into_u8arr(val: u64) -> [u8; 8] {
     //Take a 64 bit integer, pull the byte values into a vector
-    let mut working_val = val;
-    let mut retval: [u8; 8] = [0; 8];
-    for i in 0..8 {
-        retval[i] = (working_val % 256) as u8;
-        working_val = working_val / 256;
-    }
-
-    retval
+    val.to_be_bytes()
 }
 
 ///Take a slice of a u8 and return a u64
 ///Size safe, flexible and a good counterpart to pack_u64_into_u8arr
 pub fn unpack_u8arr_into_u64(val: &[u8]) -> u64 {
     //Iterate through the value byte vector backwards and multiply/add
-    if val.len() > 8 {
-        println!("Can't do it, max byte vector we can convert to u64 is 8 bytes");
-        0
-    } else {
-        let mut result: u64 = 0;
-        for i in (0..val.len()).rev() {
-            result = result * 256;
-            result += val[i] as u64;
-        }
-
-        result
-    }
+    let (bytes,_) = val.split_at(std::mem::size_of::<u64>());
+    u64::from_be_bytes(bytes.try_into().unwrap())
 }
 
 ///Turn an inbound request into a metadata transaction and add it to the server's transacton queue
@@ -303,60 +288,50 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     
     //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
-    let mut next_chunk: u64 = 0; //Chunk iterator used in the receive/append loop below
+    //let mut next_chunk: u64 = 0; //Chunk iterator used in the receive/append loop below
     println!("Got back the chunk count: {:?}",chunk_count);
     let mut chunk_vector: Vec<u8> = Vec::new(); //Vector used to buffer chunks to be written into the output file
+    let mut s: Vec<u64> = Vec::new();
+    s.push(0);
+    let mut e: Vec<u64> = Vec::new();
+    e.push(chunk_count+1);
     //Request chunks until we have the whole file
-    loop {
 
-        let bytes_to_send = single_chunk_request_packet(filename,next_chunk,&mut send_buffer);
+    //let bytes_to_send = single_chunk_request_packet(filename,next_chunk,&mut send_buffer);
+    let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
 
-        match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
-        {
-            Ok(_) => {},
-            Err(e) => {
-                println!("Unable to send data to {:?}.  Error: {:?}",target, e);
-                return Err(e)
-            }
+
+    match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
+    {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+            return Err(e)
         }
+    }
 
-        //Receive all chunks one at a time
-        let mut counter = 0;
-        let mut bytes_read = 0;
-        loop
+    //Receive all chunks one at a time
+    let mut counter = 0;
+    
+    loop
+    {
+        match server_socket.recv(&mut recv_buffer)
         {
-            match server_socket.recv(&mut recv_buffer)
-            {
-                Ok(br) => {
-                    bytes_read = br;
-                    break;
-                },
-                Err(e) => match e.kind() {
-                    io::ErrorKind::WouldBlock => {
-                        if counter < 100 {
-                            counter += 1;
-                        } else {
-                            break;
-                        }
-                    },
-                    _ => return Err(e),
-                }
-            }
-        }
-
-        //Skip the chunk index and right the contents into our vector
-        if bytes_read != 0 {
-            if unpack_u8arr_into_u64(&recv_buffer[0..8]) == next_chunk {
-                for byte in recv_buffer[8..bytes_read].iter() {
+            Ok(br) => {
+                for byte in recv_buffer[8..br].iter() {
                     chunk_vector.push(*byte);
                 }
-                next_chunk += 1;
+            },
+            Err(e) => match e.kind() {
+                io::ErrorKind::WouldBlock => {
+                    if counter < 10000 {
+                        counter += 1;
+                    } else {
+                        break;
+                    }
+                },
+                _ => return Err(e),
             }
-        }
-
-        if next_chunk >= chunk_count{
-            println!("Last bytes read {:?}",bytes_read);
-            break;
         }
     }
     
