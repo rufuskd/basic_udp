@@ -8,6 +8,7 @@ use std::mem;
 use std::convert::TryInto;
 use std::net::UdpSocket;
 use std::collections::VecDeque;
+use std::collections::HashSet;
 
 
 //Constants defining internal behavior
@@ -288,16 +289,16 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     
     //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
-    //let mut next_chunk: u64 = 0; //Chunk iterator used in the receive/append loop below
     println!("Got back the chunk count: {:?}",chunk_count);
-    let mut chunk_vector: Vec<u8> = Vec::new(); //Vector used to buffer chunks to be written into the output file
+    let mut chunk_vector: Vec<Vec<u8>> = Vec::with_capacity(chunk_count as usize); //Vector used to buffer chunks to be written into the output file
+    for _ in 0..chunk_count {
+        chunk_vector.push(Vec::new());
+    }
     let mut s: Vec<u64> = Vec::new();
     s.push(0);
     let mut e: Vec<u64> = Vec::new();
     e.push(chunk_count+1);
-    //Request chunks until we have the whole file
-
-    //let bytes_to_send = single_chunk_request_packet(filename,next_chunk,&mut send_buffer);
+    //Request the whole file to start
     let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
 
 
@@ -311,33 +312,73 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     //Receive all chunks one at a time
-    let mut counter = 0;
-    
+    let mut hitmap: HashSet<u64> = HashSet::new();
+    for i in 0..chunk_count {
+        hitmap.insert(i);
+    }
+
+    let mut counter: u64 = 0;
     loop
     {
         match server_socket.recv(&mut recv_buffer)
         {
+            //We either get the next packet, miss a packet, or a latecomer arrives
             Ok(br) => {
-                for byte in recv_buffer[8..br].iter() {
-                    chunk_vector.push(*byte);
+                counter = 0;
+                let chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
+                //Nailed it, got the next chunk
+                if hitmap.contains(&chunkdex){
+                    for byte in recv_buffer[8..br].iter() {
+                        chunk_vector[chunkdex as usize].push(*byte);
+                    }
+                    hitmap.remove(&chunkdex);
+                }
+                
+                if hitmap.len() == 0
+                {
+                    break;
                 }
             },
-            Err(e) => match e.kind() {
+            Err(err) => match err.kind() {
                 io::ErrorKind::WouldBlock => {
-                    if counter < 10000 {
-                        counter += 1;
+                    if counter < 1000000{
+                        counter+=1;
                     } else {
-                        break;
+                        counter = 0;
+                        println!("Got a bunch of chunks, missed {:?}",hitmap.len());
+                        //Submit a new request for every missed chunk
+                        let mut s: Vec<u64> = Vec::new();
+                        let mut e: Vec<u64> = Vec::new();
+
+                        let mut limiter = 0;
+                        for c in hitmap.iter() {
+                            if limiter < 30 {
+                                s.push(*c);
+                                e.push(*c+1);
+                                limiter+=1;
+                            }
+                        }
+                        //Request the chunks
+                        let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
+                        match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
+                        {
+                            Ok(_) => {},
+                            Err(e) => {
+                                println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+                                return Err(e)
+                            }
+                        }
                     }
                 },
-                _ => return Err(e),
+                _ => return Err(err),
             }
         }
     }
-    
     //Iterate over the chunk vector and make a file!
     let mut outfile = File::create("Testout")?;
-    outfile.write_all(&chunk_vector[..])?;
+    for chunk in chunk_vector.iter() {
+        outfile.write_all(&chunk[..])?;
+    }
 
     Ok(())
 }
