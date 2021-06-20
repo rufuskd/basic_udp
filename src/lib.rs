@@ -8,7 +8,6 @@ use std::mem;
 use std::convert::TryInto;
 use std::net::UdpSocket;
 use std::collections::VecDeque;
-use std::collections::HashSet;
 
 
 //Constants defining internal behavior
@@ -289,6 +288,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     
     //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
+    let mut interval_vector: Vec<Option<(u64,u64)>> = vec![None; chunk_count as usize];
     println!("Got back the chunk count: {:?}",chunk_count);
     let mut chunk_vector: Vec<Vec<u8>> = Vec::with_capacity(chunk_count as usize); //Vector used to buffer chunks to be written into the output file
     for _ in 0..chunk_count {
@@ -312,9 +312,9 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     //Receive all chunks one at a time
-    let mut hitmap: HashSet<u64> = HashSet::new();
+    let mut hitmap: Vec<u64> = Vec::with_capacity(chunk_count as usize);
     for i in 0..chunk_count {
-        hitmap.insert(i);
+        hitmap.push(i);
     }
 
     let mut counter: u64 = 0;
@@ -326,12 +326,72 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
             Ok(br) => {
                 counter = 0;
                 let chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
-                //Nailed it, got the next chunk
+                //Nailed it, got a chunk
                 if hitmap.contains(&chunkdex){
                     for byte in recv_buffer[8..br].iter() {
                         chunk_vector[chunkdex as usize].push(*byte);
                     }
-                    hitmap.remove(&chunkdex);
+                    println!("Here");
+                    hitmap.remove(chunkdex as usize);
+                    println!("There");
+                    //Add the received packet to the interval vector
+                    if interval_vector[chunkdex as usize] == None{                  
+                        if chunkdex == 0 {
+                            //Check to see if there is a right neighbor only
+                            match interval_vector[(chunkdex+1) as usize] {
+                                Some((_,end)) => {
+                                    //If there is a right neighbor
+                                    //set our end to the right neighbor's end
+                                    interval_vector[chunkdex as usize] = Some((chunkdex,end));
+                                    //set right neighbor's start to us
+                                    interval_vector[(chunkdex+1) as usize] = Some((chunkdex,end));
+                                },
+                                None => {}
+                            }
+                        } else if chunkdex == chunk_count-1 {
+                            //Check to see if there is a left neighbor only
+                            match interval_vector[(chunkdex-1) as usize] {
+                                Some((start,_)) => {
+                                    //If there is a left neighbor
+                                    //set our start to the left neighbor's start
+                                    interval_vector[chunkdex as usize] = Some((start,chunkdex));
+                                    //set left neighbor's end to us
+                                    interval_vector[(chunkdex-1) as usize] = Some((start,chunkdex));
+                                },
+                                None => {}
+                            }
+                        }
+                        else {
+                            //Check left and right, update possibly both
+                            match (interval_vector[(chunkdex-1) as usize],interval_vector[(chunkdex+1) as usize]) {
+                                (Some((left_start,_)),Some((_,right_end))) => {
+                                    //The big bad big ole bad.  Both sides, need to follow pointers and update things
+                                    //Simplified!  Place the full interval at all three positions!
+                                    interval_vector[left_start as usize] = Some((left_start,right_end));
+                                    interval_vector[chunkdex as usize] = Some((left_start,right_end));
+                                    interval_vector[right_end as usize] = Some((left_start,right_end));
+                                },
+                                (Some((start,_)),None) => {
+                                    //If there is a left neighbor
+                                    //set our start to the left neighbor's start
+                                    interval_vector[chunkdex as usize] = Some((start,chunkdex));
+                                    //set left neighbor's end to us
+                                    interval_vector[(chunkdex-1) as usize] = Some((start,chunkdex));
+                                },
+                                (None,Some((_,end))) => {
+                                    //If there is a right neighbor
+                                    //set our end to the right neighbor's end
+                                    interval_vector[chunkdex as usize] = Some((chunkdex,end));
+                                    //set right neighbor's start to us
+                                    interval_vector[(chunkdex+1) as usize] = Some((chunkdex,end));
+                                },
+                                (None,None) => {
+                                    //The simplest possible case, no neighbors, just update ourself
+                                    interval_vector[chunkdex as usize] = Some((chunkdex,chunkdex));
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 if hitmap.len() == 0
@@ -346,6 +406,24 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                     } else {
                         counter = 0;
                         println!("Got a bunch of chunks, missed {:?}",hitmap.len());
+                        let mut packo = 0;
+                        let mut packcount = 0;
+                        //Iterate over the interval vector, jump over intervals
+                        loop {
+                            if packo == interval_vector.len(){
+                                break;
+                            }
+                            match interval_vector[packo] {
+                                Some((_,end)) => {
+                                    packo = (end+1) as usize;
+                                },
+                                None => {
+                                    println!("Missed packet {:?} was at {:?}",packcount,packo);
+                                    packo+=1;
+                                    packcount+=1;
+                                }
+                            }
+                        }
                         //Submit a new request for every missed chunk
                         let mut s: Vec<u64> = Vec::new();
                         let mut e: Vec<u64> = Vec::new();
