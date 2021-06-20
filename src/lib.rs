@@ -8,6 +8,7 @@ use std::mem;
 use std::convert::TryInto;
 use std::net::UdpSocket;
 use std::collections::VecDeque;
+use std::collections::HashSet;
 
 
 //Constants defining internal behavior
@@ -312,9 +313,9 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     //Receive all chunks one at a time
-    let mut hitmap: Vec<u64> = Vec::with_capacity(chunk_count as usize);
+    let mut hitmap: HashSet<u64> = HashSet::new();
     for i in 0..chunk_count {
-        hitmap.push(i);
+        hitmap.insert(i);
     }
 
     let mut counter: u64 = 0;
@@ -332,7 +333,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                         chunk_vector[chunkdex as usize].push(*byte);
                     }
                     println!("Here");
-                    hitmap.remove(chunkdex as usize);
+                    hitmap.remove(&chunkdex);
                     println!("There");
                     //Add the received packet to the interval vector
                     if interval_vector[chunkdex as usize] == None{                  
