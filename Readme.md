@@ -7,10 +7,10 @@ This utility is a simple combo server/client to transfer files reliably over UDP
 
 ## Usage
 ### Server
-basic_udp &ltIP:port&gt
+basic_udp <&lt>IP:port<&gt>
 
 ### Client (Currently just grabs a file and saves it as Testout)
-basic_udp &ltIP:port&gt &ltfilename&gt
+basic_udp <&lt>IP:port<&gt> <&lt>filename<&gt>
 
 
 ## Design goals
