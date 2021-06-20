@@ -14,7 +14,7 @@ basic_udp &lt;IP:port&gt; &lt;filename&gt;
 
 
 ## Design goals
-This will be a stateless microservice friendly file transfer utility that runs over UDP.  It's lightweight, client's request ranges of chunks in a file and servers send back UDP packets that are mostly file data.
+This will be a stateless microservice friendly file transfer utility that runs over UDP.  It's lightweight, clients request ranges of chunks in a file and servers send back UDP packets that are mostly file data.
 
 
 ## Next tasks
