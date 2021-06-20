@@ -319,6 +319,8 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     let mut counter: u64 = 0;
+
+
     loop
     {
         match server_socket.recv(&mut recv_buffer)
@@ -327,14 +329,13 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
             Ok(br) => {
                 counter = 0;
                 let chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
+                
                 //Nailed it, got a chunk
                 if hitmap.contains(&chunkdex){
                     for byte in recv_buffer[8..br].iter() {
                         chunk_vector[chunkdex as usize].push(*byte);
                     }
-                    println!("Here");
                     hitmap.remove(&chunkdex);
-                    println!("There");
                     //Add the received packet to the interval vector
                     if interval_vector[chunkdex as usize] == None{                  
                         if chunkdex == 0 {
@@ -402,13 +403,13 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
             },
             Err(err) => match err.kind() {
                 io::ErrorKind::WouldBlock => {
-                    if counter < 1000000{
+                    if counter < 10000{
                         counter+=1;
                     } else {
                         counter = 0;
                         println!("Got a bunch of chunks, missed {:?}",hitmap.len());
                         let mut packo = 0;
-                        let mut packcount = 0;
+                        //let mut packcount = 0;
                         //Iterate over the interval vector, jump over intervals
                         loop {
                             if packo == interval_vector.len(){
@@ -419,9 +420,9 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                                     packo = (end+1) as usize;
                                 },
                                 None => {
-                                    println!("Missed packet {:?} was at {:?}",packcount,packo);
+                                    //println!("Missed packet {:?} was at {:?}",packcount,packo);
                                     packo+=1;
-                                    packcount+=1;
+                                    //packcount+=1;
                                 }
                             }
                         }
@@ -430,13 +431,30 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                         let mut e: Vec<u64> = Vec::new();
 
                         let mut limiter = 0;
-                        for c in hitmap.iter() {
-                            if limiter < 30 {
-                                s.push(*c);
-                                e.push(*c+1);
-                                limiter+=1;
+                        let mut progress: usize = 0;
+
+                        //Iterate through the range vector
+                        //Start at the earliest interval
+
+                        while progress < chunk_count as usize && limiter < 30 {
+                            if interval_vector[progress] == None {
+                                let curstart = progress;
+                                while progress < (chunk_count-1) as usize && interval_vector[progress] == None {
+                                    progress += 1
+                                }
+                                let curend = progress;
+                                s.push(curstart as u64);
+                                e.push(curend as u64);
+                                if progress == (chunk_count-1) as usize {
+                                    break;
+                                }
+                                progress = (interval_vector[progress].unwrap().1+1) as usize;
+                                limiter+=1
+                            } else {
+                                progress = (interval_vector[progress].unwrap().1+1) as usize;
                             }
                         }
+
                         //Request the chunks
                         let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
                         match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
