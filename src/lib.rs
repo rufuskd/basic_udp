@@ -9,6 +9,7 @@ use std::convert::TryInto;
 use std::net::UdpSocket;
 use std::collections::VecDeque;
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 
 //Constants defining internal behavior
@@ -318,8 +319,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
         hitmap.insert(i);
     }
 
-    let mut counter: u64 = 0;
-
+    let mut counter: Instant = Instant::now();
 
     loop
     {
@@ -327,11 +327,11 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
         {
             //We either get the next packet, miss a packet, or a latecomer arrives
             Ok(br) => {
-                counter = 0;
                 let chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
                 
                 //Nailed it, got a chunk
                 if hitmap.contains(&chunkdex){
+                    counter = Instant::now();
                     for byte in recv_buffer[8..br].iter() {
                         chunk_vector[chunkdex as usize].push(*byte);
                     }
@@ -403,67 +403,72 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
             },
             Err(err) => match err.kind() {
                 io::ErrorKind::WouldBlock => {
-                    if counter < 10000{
-                        counter+=1;
-                    } else {
-                        counter = 0;
-                        println!("Got a bunch of chunks, missed {:?}",hitmap.len());
-                        let mut packo = 0;
-                        //let mut packcount = 0;
-                        //Iterate over the interval vector, jump over intervals
-                        loop {
-                            if packo == interval_vector.len(){
-                                break;
-                            }
-                            match interval_vector[packo] {
-                                Some((_,end)) => {
-                                    packo = (end+1) as usize;
-                                },
-                                None => {
-                                    //println!("Missed packet {:?} was at {:?}",packcount,packo);
-                                    packo+=1;
-                                    //packcount+=1;
+                    match Instant::now().checked_duration_since(counter) {
+                        Some(diff) => {
+                            if diff > Duration::from_millis(100) {
+                                counter = Instant::now();
+                                println!("Got a bunch of chunks, missed {:?}",hitmap.len());
+                                let mut packo = 0;
+                                //Iterate over the interval vector, jump over intervals
+                                loop {
+                                    if packo == interval_vector.len(){
+                                        break;
+                                    }
+                                    match interval_vector[packo] {
+                                        Some((_,end)) => {
+                                            packo = (end+1) as usize;
+                                        },
+                                        None => {
+                                            //println!("Missed packet {:?} was at {:?}",packcount,packo);
+                                            packo+=1;
+                                            //packcount+=1;
+                                        }
+                                    }
+                                }
+                                //Submit a new request for every missed chunk
+                                let mut s: Vec<u64> = Vec::new();
+                                let mut e: Vec<u64> = Vec::new();
+
+                                let mut limiter = 0;
+                                let mut progress: usize = 0;
+
+                                //Iterate through the range vector
+
+                                while progress < chunk_count as usize && limiter < 30 {
+                                    if interval_vector[progress] == None {
+                                        let curstart = progress;
+                                        while progress < (chunk_count-1) as usize && interval_vector[progress] == None {
+                                            progress += 1
+                                        }
+                                        let curend = progress;
+                                        s.push(curstart as u64);
+                                        e.push(curend as u64);
+                                        if progress == (chunk_count-1) as usize {
+                                            break;
+                                        }
+                                        progress = (interval_vector[progress].unwrap().1+1) as usize;
+                                        limiter+=1
+                                    } else {
+                                        progress = (interval_vector[progress].unwrap().1+1) as usize;
+                                    }
+                                }
+
+                                //Request the chunks
+                                let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
+                                match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
+                                {
+                                    Ok(_) => {
+                                        println!("Sent a chunk request");
+                                    },
+                                    Err(e) => {
+                                        println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+                                        return Err(e)
+                                    }
                                 }
                             }
-                        }
-                        //Submit a new request for every missed chunk
-                        let mut s: Vec<u64> = Vec::new();
-                        let mut e: Vec<u64> = Vec::new();
-
-                        let mut limiter = 0;
-                        let mut progress: usize = 0;
-
-                        //Iterate through the range vector
-                        //Start at the earliest interval
-
-                        while progress < chunk_count as usize && limiter < 30 {
-                            if interval_vector[progress] == None {
-                                let curstart = progress;
-                                while progress < (chunk_count-1) as usize && interval_vector[progress] == None {
-                                    progress += 1
-                                }
-                                let curend = progress;
-                                s.push(curstart as u64);
-                                e.push(curend as u64);
-                                if progress == (chunk_count-1) as usize {
-                                    break;
-                                }
-                                progress = (interval_vector[progress].unwrap().1+1) as usize;
-                                limiter+=1
-                            } else {
-                                progress = (interval_vector[progress].unwrap().1+1) as usize;
-                            }
-                        }
-
-                        //Request the chunks
-                        let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
-                        match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
-                        {
-                            Ok(_) => {},
-                            Err(e) => {
-                                println!("Unable to send data to {:?}.  Error: {:?}",target, e);
-                                return Err(e)
-                            }
+                        },
+                        None => {
+                            counter = Instant::now();
                         }
                     }
                 },
