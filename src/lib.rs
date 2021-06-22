@@ -73,6 +73,7 @@ pub fn add_chunk_transaction(data: &Vec<u8>, source: std::net::SocketAddr, trans
     byte_counter+=1;
     let filename = String::from_utf8_lossy(&data[byte_counter..byte_counter+namelen]);
     byte_counter+=namelen;
+
     let interval_count: u64 = unpack_u8arr_into_u64(&data[byte_counter..byte_counter+8]);
     byte_counter+=8;
 
@@ -131,10 +132,23 @@ pub fn server_handle_inbound(
 
 
 //This function is to service transactions
-pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) -> std::io::Result<()> {
+//THIS IS THE ONLY FUNCTION THAT WILL PASS DATA BACK TO THE CLIENT UNDER ANY CIRCUMSTANCES, THIS IS SECURITY CRITICAL!
+pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket, whitelist: &mut HashSet<String>) -> std::io::Result<()> {
     
     let mut send_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
-    
+    //Any request for a file that is not on the whitelist gets an all zeros response
+    if !whitelist.contains(&t.filename) {
+        let nil_reply: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
+        //Send the packet
+        match socket.send_to(&nil_reply[0..PACKET_SIZE],t.target)
+        {
+            Ok(_) => {},
+            Err(e) => {
+                println!("Unable to send data to {:?}.  Error:{:?}",t.target,e);
+                return Err(e)
+            }
+        }
+    }
     //This is either a metadata request, or a chunk request
     if t.starts.len() == 0{
 
@@ -165,17 +179,18 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
                 //Starting simple, just unencrypted chunks
                 let chunknum = pack_u64_into_u8arr(*s+i);
 
-                //TODO very unsophisticated way of packing these, but good enough for now
+                //Pack the chunknum into the packet buffer
                 let mut byte_counter: usize = 0;
                 for byte in chunknum.iter(){
                     packet_buffer[byte_counter] = *byte;
                     byte_counter+=1;
                 }
+                //Now pack the actual bytes of the chunk
                 for byte in buffer[0..bytes_read].iter(){
                     packet_buffer[byte_counter] = *byte;
                     byte_counter+=1;
                 }
-                //Send the packet
+                //Send the packet, this will loop and another will be sent
                 match socket.send_to(&packet_buffer[0..byte_counter],t.target)
                 {
                     Ok(_) => {},
@@ -192,6 +207,21 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket) 
 }
 
 pub fn serve(bind_address: &String) -> std::io::Result<()> {
+    let mut whitelist: HashSet<String> = HashSet::new();
+    match File::open("./whitelist") {
+        Ok(f) => {
+            let reader = io::BufReader::new(f);
+            for line in reader.lines() {
+                if let Ok(item) = line {
+                    whitelist.insert(item);
+                }
+            }
+        },
+        Err(_) => {
+
+        }
+    }
+
     let mut transactions: VecDeque<ChunkTransaction> = VecDeque::new();
     let mut server_socket: UdpSocket;
     match UdpSocket::bind(bind_address)
@@ -230,7 +260,7 @@ pub fn serve(bind_address: &String) -> std::io::Result<()> {
 
         //And service the transaction queue
         for mut val in transactions.iter_mut() {
-            match server_send_all_chunks(&mut val, &mut server_socket) {
+            match server_send_all_chunks(&mut val, &mut server_socket, &mut whitelist) {
                 Ok(_) => {},
                 Err(_) => println!("Error sending chunks for {:?}", val.filename),
             }
@@ -264,29 +294,16 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     //Request metadata
-    let bytes_to_send = metadata_request_packet(filename, &mut send_buffer);
-    match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
-    {
-        Ok(_) => {},
+    match request_metadata(&server_socket, &mut send_buffer, &mut recv_buffer, &target, &filename) {
+        Ok(_) => {
+            //We're good to go
+        },
         Err(e) => {
-            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
-            return Err(e)
+            println!("Unable to request metadata");
+            return Err(e);
         }
     }
 
-
-    //Receive metadata
-    loop
-    {
-        match server_socket.recv(&mut recv_buffer)
-        {
-            Ok(_) => {break},
-            Err(e) => match e.kind() {
-                io::ErrorKind::WouldBlock => continue,
-                _ => return Err(e),
-            }
-        }
-    }
     
     //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
@@ -538,6 +555,51 @@ pub fn metadata_response_packet(filename: &String, buffer: &mut[u8;PACKET_SIZE])
     }
 
     byte_counter
+}
+
+pub fn request_metadata(server_socket: &UdpSocket ,send_buffer: &mut[u8;PACKET_SIZE], recv_buffer: &mut[u8;PACKET_SIZE],target: &String, filename: &String) -> std::io::Result<()> {
+    //Send a metadata request until we have a confirmed response or an error
+    //Request metadata
+    let bytes_to_send = metadata_request_packet(filename, send_buffer);
+    match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
+    {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+            return Err(e)
+        }
+    }
+
+    let mut counter: Instant = Instant::now();
+    //Receive metadata
+    loop
+    {
+        match server_socket.recv(&mut recv_buffer[..])
+        {
+            Ok(_) => { return Ok(()) },
+            Err(e) => match e.kind() {
+                io::ErrorKind::WouldBlock => { },
+                _ => return Err(e),
+            }
+        }
+        match Instant::now().checked_duration_since(counter) {
+            Some(diff) => {
+                if diff > Duration::from_millis(100) {
+                    match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
+                    {
+                        Ok(_) => {},
+                        Err(e) => {
+                            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
+                            return Err(e)
+                        }
+                    }
+                }
+            },
+            None => {
+                counter = Instant::now();
+            }
+        }
+    }
 }
 
 ///Populates a given send buffer with the necessary field to request chunks of a file with name fname, returns how many bytes are in the packet
