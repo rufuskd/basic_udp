@@ -269,7 +269,8 @@ pub fn serve(bind_address: &String) -> std::io::Result<()> {
     }
 }
 
-pub fn request_sequential(target: &String, filename: &String) -> std::io::Result<()> {
+
+pub fn client_request_sequential(target: &String, filename: &String) -> std::io::Result<()> {
     let server_socket: UdpSocket; //Create the socket using provided params
     let mut send_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     let mut recv_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
@@ -294,7 +295,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     }
 
     //Request metadata
-    match request_metadata(&server_socket, &mut send_buffer, &mut recv_buffer, &target, &filename) {
+    match client_request_metadata(&server_socket, &mut send_buffer, &mut recv_buffer, &target, &filename) {
         Ok(_) => {
             //We're good to go
         },
@@ -307,6 +308,10 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
     
     //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
+    if chunk_count == 0 {
+        println!("Either the requested file was empty or not on the whitelist of requestable files");
+        return Ok(())
+    }
     let mut interval_vector: Vec<Option<(u64,u64)>> = vec![None; chunk_count as usize];
     println!("Got back the chunk count: {:?}",chunk_count);
     let mut chunk_vector: Vec<Vec<u8>> = Vec::with_capacity(chunk_count as usize); //Vector used to buffer chunks to be written into the output file
@@ -355,7 +360,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                     hitmap.remove(&chunkdex);
                     //Add the received packet to the interval vector
                     if interval_vector[chunkdex as usize] == None{                  
-                        if chunkdex == 0 {
+                        if chunkdex == 0 && chunk_count > 1 {
                             //Check to see if there is a right neighbor only
                             match interval_vector[(chunkdex+1) as usize] {
                                 Some((_,end)) => {
@@ -367,7 +372,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                                 },
                                 None => {}
                             }
-                        } else if chunkdex == chunk_count-1 {
+                        } else if chunkdex > 0 && chunkdex == chunk_count-1 {
                             //Check to see if there is a left neighbor only
                             match interval_vector[(chunkdex-1) as usize] {
                                 Some((start,_)) => {
@@ -380,7 +385,7 @@ pub fn request_sequential(target: &String, filename: &String) -> std::io::Result
                                 None => {}
                             }
                         }
-                        else {
+                        else if chunkdex > 0 && chunkdex < chunk_count-1 {
                             //Check left and right, update possibly both
                             match (interval_vector[(chunkdex-1) as usize],interval_vector[(chunkdex+1) as usize]) {
                                 (Some((left_start,_)),Some((_,right_end))) => {
@@ -557,7 +562,7 @@ pub fn metadata_response_packet(filename: &String, buffer: &mut[u8;PACKET_SIZE])
     byte_counter
 }
 
-pub fn request_metadata(server_socket: &UdpSocket ,send_buffer: &mut[u8;PACKET_SIZE], recv_buffer: &mut[u8;PACKET_SIZE],target: &String, filename: &String) -> std::io::Result<()> {
+pub fn client_request_metadata(server_socket: &UdpSocket ,send_buffer: &mut[u8;PACKET_SIZE], recv_buffer: &mut[u8;PACKET_SIZE],target: &String, filename: &String) -> std::io::Result<()> {
     //Send a metadata request until we have a confirmed response or an error
     //Request metadata
     let bytes_to_send = metadata_request_packet(filename, send_buffer);

@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
         //Run in client mode
         //Parse a filename, a port:address
         //Perform the client portion of transfer
-        let result = basic_udp::request_sequential(&args[1], &args[2]);
+        let result = basic_udp::client_request_sequential(&args[1], &args[2]);
         return result;
     } else {
         println!("Server mode:\nbasic_udp <address:port>\nClient mode:\nbasic_udp <address:port> <filename>");
