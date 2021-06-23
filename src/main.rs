@@ -14,23 +14,32 @@ fn main() -> std::io::Result<()> {
         //Disregard whatever was passed, start a server
         //Serve files indefinitely until an error happens
         let mut server_arg_map: HashMap<String,String> = HashMap::new();
-        let config_file = File::open(&args[1])?;
-        let reader = io::BufReader::new(config_file);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    let split: Vec<&str> = l.split_ascii_whitespace().collect();
-                    if split.len() >= 2{
-                        server_arg_map.entry(split[0].to_string()).or_insert(split[1].to_string());
+
+        match File::open(&args[1]) {
+            Ok(config_file) => {
+                let reader = io::BufReader::new(config_file);
+                for line in reader.lines() {
+                    match line {
+                        Ok(l) => {
+                            let split: Vec<&str> = l.split_ascii_whitespace().collect();
+                            if split.len() >= 2{
+                                server_arg_map.entry(split[0].to_string()).or_insert(split[1].to_string());
+                            }
+                        },
+                        Err(_) => {
+                            //No big deal, go with default settings/behavior
+                        }
                     }
-                },
-                Err(_) => {
-                    //No big deal, go with default settings/behavior
                 }
+            },
+            Err(e) => {
+                println!("Unable to open config file");
+                return Err(e);
             }
         }
+        
 
-        println!("Here's the config map {:?}",server_arg_map);
+        //println!("Here's the config map {:?}",server_arg_map);
         //We've parsed the config file, use it or fill out defaults
         if !server_arg_map.contains_key("ip") {
             println!("ip not found in config file, using default IP/port 127.0.0.1:9001");
