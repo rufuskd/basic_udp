@@ -206,9 +206,9 @@ pub fn server_send_all_chunks(t: &mut ChunkTransaction, socket: &mut UdpSocket, 
     Ok(())
 }
 
-pub fn serve(bind_address: &String) -> std::io::Result<()> {
+pub fn serve(bind_address: &String, whitelist_filename: &String) -> std::io::Result<()> {
     let mut whitelist: HashSet<String> = HashSet::new();
-    match File::open("./whitelist") {
+    match File::open(whitelist_filename) {
         Ok(f) => {
             let reader = io::BufReader::new(f);
             for line in reader.lines() {
