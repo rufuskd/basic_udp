@@ -17,6 +17,7 @@ The config file is a series of key value pairs specified on subsequent lines
 
 ### For example
 ip 127.0.0.1:9001
+
 whitelist whitelist
 ### Would specify a config equivalent to the default settings
 ### If a config file is missing one of the required settings, the server will use defaults and print out a message about it
