@@ -42,16 +42,16 @@ fn main() -> std::io::Result<()> {
         }
 
         let result = basic_udp::serve(&server_arg_map["ip"],&server_arg_map["whitelist"]);
-        
+
         return result;
-    } else if args.len() == 3 {
+    } else if args.len() == 4 {
         //Run in client mode
         //Parse a filename, a port:address
         //Perform the client portion of transfer
-        let result = basic_udp::client_request_sequential(&args[1], &args[2]);
+        let result = basic_udp::client_request_sequential(&args[1], &args[2], &args[3]);
         return result;
     } else {
-        println!("Server mode:\nbasic_udp <config file>\nClient mode:\nbasic_udp <address:port> <filename>");
+        println!("Server mode:\nbasic_udp <config file>\nClient mode:\nbasic_udp <address:port> <filename> <outfilename>");
         Ok(())
     }
 }

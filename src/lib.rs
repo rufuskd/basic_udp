@@ -270,7 +270,7 @@ pub fn serve(bind_address: &String, whitelist_filename: &String) -> std::io::Res
 }
 
 
-pub fn client_request_sequential(target: &String, filename: &String) -> std::io::Result<()> {
+pub fn client_request_sequential(target: &String, filename: &String, outfilename: &String) -> std::io::Result<()> {
     let server_socket: UdpSocket; //Create the socket using provided params
     let mut send_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     let mut recv_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
@@ -499,7 +499,7 @@ pub fn client_request_sequential(target: &String, filename: &String) -> std::io:
         }
     }
     //Iterate over the chunk vector and make a file!
-    let mut outfile = File::create("Testout")?;
+    let mut outfile = File::create(outfilename)?;
     for chunk in chunk_vector.iter() {
         outfile.write_all(&chunk[..])?;
     }
