@@ -138,7 +138,7 @@ pub fn server_handle_inbound(
 ///Service the transaction represented by t on the socket provided, using the appropriate whitelist, limited by limiter
 ///If limiter is 0, no limits!
 pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSocket, whitelist: &mut HashSet<String>, limiter: u64) -> std::io::Result<()> {
-    
+    let mut sent_counter = 0;
     let mut send_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
     //Any request for a file that is not on the whitelist gets an all zeros response
     if !whitelist.contains(&t.filename) {
@@ -167,7 +167,7 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
             }
         }
     } else {
-        let mut sent_counter = 0;
+        
         let mut file = File::open(&t.filename)?;
         let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
         //Look through all requested chunks and grab em
@@ -178,7 +178,9 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
             for i in 0..(*e-*s){
                 file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
                 let bytes_read = file.read(&mut buffer)?;
-
+                if bytes_read == 0 {
+                    break;
+                }
                 //Data is ready, put it in a buffer
                 let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
                 //Starting simple, just unencrypted chunks
@@ -201,6 +203,7 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
                     Ok(_) => {
                         sent_counter += 1;
                         if limiter != 0 && sent_counter >= limiter {
+                            println!("Sent counter {:?}",sent_counter);
                             return Ok(())
                         }
                     },
@@ -213,6 +216,7 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
         }
     }
 
+    println!("Sent counter {:?}",sent_counter);
     Ok(())
 }
 
@@ -582,15 +586,51 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
         match Instant::now().checked_duration_since(counter) {
             Some(diff) => {
                 //If we have gone 100 milliseconds without receiving anything, request something
-                if next || diff > Duration::from_millis(100) {
+                if next || diff > Duration::from_millis(200) {
                     let mut s: Vec<u64> = Vec::new();
-                    s.push(part_start);
                     let mut e: Vec<u64> = Vec::new();
-                    e.push(part_end);
+                    //Traverse the interval vector, add starts and ends
+                    //TODO, this should be made much more efficient
+                    let mut curstart: Option<u64> = None;
+                    let mut interval_progress: u64 = 0;
+                    while interval_progress < interval_vector.len() as u64 {
+                        if interval_vector[interval_progress as usize] == None{
+                            if curstart == None {
+                                curstart = Some(interval_progress);
+                            } else {
+                                interval_progress += 1;
+                            }
+                        } else {
+                            match curstart {
+                                Some(st) => {
+                                    s.push(st);
+                                    e.push(interval_progress);
+                                    interval_progress = interval_vector[interval_progress as usize].unwrap().1 + 1;
+                                    curstart = None;
+                                },
+                                None => {
+                                    interval_progress = interval_vector[interval_progress as usize].unwrap().1 + 1;
+                                }
+                            }
+                        }
+                    }
+                    if curstart != None {
+                        match curstart {
+                            Some(st) => {
+                                s.push(st);
+                                e.push(interval_progress);
+                            },
+                            None => {
+                                println!("Oh no we have a start without a stop");
+                            }
+                        }
+                    }
+
                     let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
                     match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
                     {
                         Ok(_) => {
+                            println!("Sent a packet");
                             counter = Instant::now();
                         },
                         Err(e) => {
@@ -698,8 +738,8 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
             }
             progress+=1;
 
-            //We're done!
             if part_end == chunk_count {
+                //We're done!
                 break;
             } else {
                 //Reinitialize all of our data structures
