@@ -625,7 +625,8 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
                             }
                         }
                     }
-
+                    println!("Starts: {:?}",s);
+                    println!("Ends: {:?}",e);
                     let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
                     match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
                     {
@@ -674,7 +675,9 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
                                         //set right neighbor's start to us
                                         interval_vector[(chunkdex+1) as usize] = Some((chunkdex,end));
                                     },
-                                    None => {}
+                                    None => {
+                                        interval_vector[chunkdex as usize] = Some((chunkdex,chunkdex));
+                                    }
                                 }
                             } else if chunkdex > 0 && chunkdex == (chunk_mem_limit as u64) - 1 {
                                 //Check to see if there is a left neighbor only
@@ -686,7 +689,9 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
                                         //set left neighbor's end to us
                                         interval_vector[(chunkdex-1) as usize] = Some((start,chunkdex));
                                     },
-                                    None => {}
+                                    None => {
+                                        interval_vector[chunkdex as usize] = Some((chunkdex,chunkdex));
+                                    }
                                 }
                             }
                             else if chunkdex > 0 && chunkdex < (chunk_mem_limit as u64) - 1 {
