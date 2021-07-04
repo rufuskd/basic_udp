@@ -1,11 +1,11 @@
 use std::collections::HashSet;
+use std::fmt;
 
-#[derive(Debug)]
-struct Node
+pub struct Node
 {
     i: usize,
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
     parent: Option<usize>,
     lefty: Option<bool>, //The relationship of this node to its parent
     left: Option<usize>,
@@ -27,12 +27,21 @@ impl Node
     }
 }
 
+impl fmt::Debug for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Node")
+         .field("Start", &self.start)
+         .field("End", &self.end)
+         .finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct RangeTree
 {
-    root: usize,
-    intervals: HashSet<usize>,
-    tree_vec: Vec<Node>,
+    pub root: usize,
+    pub intervals: HashSet<usize>,
+    pub tree_vec: Vec<Node>,
 }
 
 impl RangeTree
@@ -94,29 +103,23 @@ impl RangeTree
                             traverser = rn;
                         },
                         None => {
-                            //We reached a split, tried to go left, but nothing is on the left
+                            //We reached a split, tried to go right, but nothing is on the right
                             //This is a repeat packet on a completed interval and can be quietly ignored
                             break;
                         }
                     }
-                } else {
-                    //We are at a split, but we aren't greater of less, it's a repeat packet
-                    //This can be quietly ignored, and will happen
+                } else if index ==  self.tree_vec[traverser].start {
+                    //We reached a split, and we are that packet!
+                    self.intervals.remove(&traverser);
                     break;
                 }
             } else {
                 //We are at a range, we will either narrow it, or split it
                 if index == self.tree_vec[traverser].start {
                     self.tree_vec[traverser].start+=1;
-                    if self.tree_vec[traverser].start == self.tree_vec[traverser].end {
-                        self.intervals.remove(&traverser);
-                    }
                     break;
                 } else if index == self.tree_vec[traverser].end {
-                    self.tree_vec[traverser].start-=1;
-                    if self.tree_vec[traverser].start == self.tree_vec[traverser].end {
-                        self.intervals.remove(&traverser);
-                    }
+                    self.tree_vec[traverser].end-=1;
                     break;
                 } else if index > self.tree_vec[traverser].start && index < self.tree_vec[traverser].end{
                     //Turn the current node into a split, remove it from the intervals
@@ -127,8 +130,10 @@ impl RangeTree
                     self.tree_vec[traverser].end = index;
                     //Push a left and right node for the split
                     self.tree_vec[traverser].left = Some(self.tree_vec.len());
+                    self.intervals.insert(self.tree_vec.len());
                     self.tree_vec.push(Node::new(self.tree_vec.len(),lowside,index-1,Some(true)));
                     self.tree_vec[traverser].right = Some(self.tree_vec.len());
+                    self.intervals.insert(self.tree_vec.len());
                     self.tree_vec.push(Node::new(self.tree_vec.len(),index+1,highside,Some(false)));
                     break;
                 } else {
