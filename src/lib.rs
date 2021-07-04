@@ -55,7 +55,6 @@ pub fn add_metadata_transaction(data: &[u8], source: std::net::SocketAddr, trans
     let filename = String::from_utf8_lossy(&data[1..1+namelen]);
     
     println!("Metadata request received for {}", filename);
-
     //Now populate the chunk starts and ends (Both are empty for a metadata request)
     let new_transaction = ChunkTransaction {
         filename: String::from(filename),
@@ -112,13 +111,6 @@ pub fn server_handle_inbound(
     //Get packet ID, this determines what type of request the packet is
     let id: u64 = unpack_u8arr_into_u64(&buffer[byte_counter..byte_counter + 8]);
     byte_counter+=8;
-
-    //Maybe not though, perhaps avoid a copy and just refer to a slice
-    //Get the packet's data, stash it in a vector for easy use
-    //let mut data: Vec<u8> = Vec::with_capacity(BUFFER_SIZE);
-    //for i in byte_counter..bytes {
-    //    data.push(buffer[i]);
-    //}
 
     //0 This is going to be a plaintext metadata request
     if id == 0 {
@@ -206,7 +198,7 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
                     Ok(_) => {
                         sent_counter += 1;
                         if limiter != 0 && sent_counter >= limiter {
-                            println!("Sent counter {:?}",sent_counter);
+                            //println!("Sent {:?} packets",sent_counter);
                             return Ok(())
                         }
                     },
@@ -219,7 +211,7 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
         }
     }
 
-    println!("Sent counter {:?}",sent_counter);
+    //println!("Sent {:?} packets",sent_counter);
     Ok(())
 }
 
@@ -286,230 +278,6 @@ pub fn serve(bind_address: &String, whitelist_filename: &String) -> std::io::Res
         }
         transactions.clear();
     }
-}
-
-
-/// Request a file by requesting all of its chunks sequentially, limiting the amount of the file stored in RAM at any moment
-pub fn client_request_sequential(target: &String, filename: &String, outfilename: &String) -> std::io::Result<()> {
-    let server_socket: UdpSocket; //Create the socket using provided params
-    let mut send_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
-    let mut recv_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
-
-    //Bind our socket locally to any available port, this is an outbound request
-    match UdpSocket::bind("0.0.0.0:0")
-    {
-        Ok(s) => server_socket = s,
-        Err(e) => {
-            println!("Unable to bind a UDP socket. Error:{:?}",e);
-            return Err(e);
-        }
-    }
-    //Set to nonblocking
-    match server_socket.set_nonblocking(true)
-    {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Unable to set nonblocking, error: {:?}",e);
-            return Err(e)
-        }
-    }
-
-
-    //GOOD, this method handles repeating requests in a reasonable timeframe
-    match client_request_metadata(&server_socket, &mut send_buffer, &mut recv_buffer, &target, &filename) {
-        Ok(_) => {
-            //We're good to go
-        },
-        Err(e) => {
-            println!("Unable to request metadata");
-            return Err(e);
-        }
-    }
-
-    
-    //We don't care about the ID field of the returned metadata packet yet TODO
-    let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
-    if chunk_count == 0 {
-        println!("Either the requested file was empty or not on the whitelist of requestable files");
-        return Ok(())
-    }
-
-
-    //VERY BAD, this next monolith of terror is way too much code to be one function
-    let mut interval_vector: Vec<Option<(u64,u64)>> = vec![None; chunk_count as usize];
-    println!("Got back the chunk count: {:?}",chunk_count);
-    let mut chunk_vector: Vec<Vec<u8>> = Vec::with_capacity(chunk_count as usize); //Vector used to buffer chunks to be written into the output file
-    for _ in 0..chunk_count {
-        chunk_vector.push(Vec::new());
-    }
-    let mut s: Vec<u64> = Vec::new();
-    s.push(0);
-    let mut e: Vec<u64> = Vec::new();
-    e.push(chunk_count+1);
-    //Request the whole file to start
-    let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
-
-
-    match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
-    {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Unable to send data to {:?}.  Error: {:?}",target, e);
-            return Err(e)
-        }
-    }
-
-    //Receive all chunks one at a time
-    let mut hitmap: HashSet<u64> = HashSet::new();
-    for i in 0..chunk_count {
-        hitmap.insert(i);
-    }
-
-    let mut counter: Instant = Instant::now();
-
-    loop
-    {
-        match server_socket.recv(&mut recv_buffer)
-        {
-            //We either get the next packet, miss a packet, or a latecomer arrives
-            Ok(br) => {
-                let chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
-                
-                //Nailed it, got a chunk
-                if hitmap.contains(&chunkdex){
-                    counter = Instant::now();
-                    for byte in &recv_buffer[8..br] {
-                        chunk_vector[chunkdex as usize].push(*byte);
-                    }
-                    hitmap.remove(&chunkdex);
-                    //Add the received packet to the interval vector
-                    if interval_vector[chunkdex as usize] == None{                  
-                        if chunkdex == 0 && chunk_count > 1 {
-                            //Check to see if there is a right neighbor only
-                            match interval_vector[(chunkdex+1) as usize] {
-                                Some((_,end)) => {
-                                    //If there is a right neighbor
-                                    //set our end to the right neighbor's end
-                                    interval_vector[chunkdex as usize] = Some((chunkdex,end));
-                                    //set right neighbor's start to us
-                                    interval_vector[(chunkdex+1) as usize] = Some((chunkdex,end));
-                                },
-                                None => {}
-                            }
-                        } else if chunkdex > 0 && chunkdex == chunk_count-1 {
-                            //Check to see if there is a left neighbor only
-                            match interval_vector[(chunkdex-1) as usize] {
-                                Some((start,_)) => {
-                                    //If there is a left neighbor
-                                    //set our start to the left neighbor's start
-                                    interval_vector[chunkdex as usize] = Some((start,chunkdex));
-                                    //set left neighbor's end to us
-                                    interval_vector[(chunkdex-1) as usize] = Some((start,chunkdex));
-                                },
-                                None => {}
-                            }
-                        }
-                        else if chunkdex > 0 && chunkdex < chunk_count-1 {
-                            //Check left and right, update possibly both
-                            match (interval_vector[(chunkdex-1) as usize],interval_vector[(chunkdex+1) as usize]) {
-                                (Some((left_start,_)),Some((_,right_end))) => {
-                                    //The big bad big ole bad.  Both sides, need to follow pointers and update things
-                                    //Simplified!  Place the full interval at all three positions!
-                                    interval_vector[left_start as usize] = Some((left_start,right_end));
-                                    interval_vector[chunkdex as usize] = Some((left_start,right_end));
-                                    interval_vector[right_end as usize] = Some((left_start,right_end));
-                                },
-                                (Some((start,_)),None) => {
-                                    //If there is a left neighbor
-                                    //set our start to the left neighbor's start
-                                    interval_vector[chunkdex as usize] = Some((start,chunkdex));
-                                    //set left neighbor's end to us
-                                    interval_vector[(chunkdex-1) as usize] = Some((start,chunkdex));
-                                },
-                                (None,Some((_,end))) => {
-                                    //If there is a right neighbor
-                                    //set our end to the right neighbor's end
-                                    interval_vector[chunkdex as usize] = Some((chunkdex,end));
-                                    //set right neighbor's start to us
-                                    interval_vector[(chunkdex+1) as usize] = Some((chunkdex,end));
-                                },
-                                (None,None) => {
-                                    //The simplest possible case, no neighbors, just update ourself
-                                    interval_vector[chunkdex as usize] = Some((chunkdex,chunkdex));
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                //If there are no more chunks left to find, we're done!
-                if hitmap.len() == 0
-                {
-                    break;
-                }
-            },
-            Err(err) => match err.kind() {
-                io::ErrorKind::WouldBlock => {
-                    //If we don't have a packet to get, check the counter
-                    match Instant::now().checked_duration_since(counter) {
-                        Some(diff) => {
-                            //If it has been more than 100 milliseconds with no traffic, reset the counter and resend a request for all missing packets
-                            if diff > Duration::from_millis(100) {
-                                counter = Instant::now();
-                                //Submit a new request for every missed chunk
-                                let mut s: Vec<u64> = Vec::new();
-                                let mut e: Vec<u64> = Vec::new();
-
-                                let mut progress: usize = 0;
-
-                                while progress < chunk_count as usize {
-                                    if interval_vector[progress] == None {
-                                        let curstart = progress;
-                                        while progress < (chunk_count-1) as usize && interval_vector[progress] == None {
-                                            progress += 1
-                                        }
-                                        let curend = progress;
-                                        s.push(curstart as u64);
-                                        e.push(curend as u64);
-                                        if progress == (chunk_count-1) as usize {
-                                            break;
-                                        }
-                                        progress = (interval_vector[progress].unwrap().1+1) as usize;
-                                    } else {
-                                        progress = (interval_vector[progress].unwrap().1+1) as usize;
-                                    }
-                                }
-
-                                //Request the chunks
-                                let bytes_to_send = range_chunk_request_packet(filename,s,e,&mut send_buffer);
-                                match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
-                                {
-                                    Ok(_) => {
-                                        println!("Sent a chunk request");
-                                    },
-                                    Err(e) => {
-                                        println!("Unable to send data to {:?}.  Error: {:?}",target, e);
-                                        return Err(e)
-                                    }
-                                }
-                            }
-                        },
-                        None => {
-                            counter = Instant::now();
-                        }
-                    }
-                },
-                _ => return Err(err),
-            }
-        }
-    }
-    //Iterate over the chunk vector and make a file!
-    let mut outfile = File::create(outfilename)?;
-    for chunk in chunk_vector.iter() {
-        outfile.write_all(&chunk[..])?;
-    }
-
-    Ok(())
 }
 
 /// Request a file by requesting all of its chunks sequentially, limiting the amount of the file stored in RAM at any moment
