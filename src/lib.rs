@@ -1,3 +1,5 @@
+mod range_tree;
+
 use std::io;
 use std::io::prelude::*;
 use std::io::SeekFrom;
@@ -10,7 +12,7 @@ use std::net::UdpSocket;
 use std::collections::VecDeque;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
-
+use range_tree::RangeTree;
 
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
@@ -577,6 +579,7 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
         hitmap.insert(i);
     }
 
+    let mut rt: RangeTree = RangeTree::new(part_start as usize,part_end as usize);
     
     let mut counter: Instant = Instant::now(); //Counter used to track how long it has been since we heard anything from the server
     let mut next: bool = true; //Boolean used to indicate that regardless of the counter, it's time to request a new packet
