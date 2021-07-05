@@ -326,7 +326,8 @@ impl RangeTree
                     loop {
                         let left_depth: usize;
                         let right_depth: usize;
-
+                        let parent: Option<usize>;
+                        parent = self.tree_vec[depth_traverser].parent;
                         match self.tree_vec[depth_traverser].left {
                             Some(ld) => {left_depth = self.tree_vec[ld].depth},
                             None => {left_depth = 0}
@@ -343,7 +344,7 @@ impl RangeTree
                             //println!("Nah, no need to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
                         }
 
-                        match self.tree_vec[depth_traverser].parent {
+                        match parent {
                             Some(d) => {
                                 depth_traverser = d;
                             },
