@@ -138,27 +138,28 @@ impl RangeTree
             
             //Update the depths accordingly at the operative nodes, and then all the way up
             //Now adjust depth numbers all the way up
-            let mut depth_traverser = i;
+            let mut depth_traverser = old_root;
             loop {
                 let left_depth: usize;
                 let right_depth: usize;
+
+                match self.tree_vec[depth_traverser].left {
+                    Some(ld) => {left_depth = self.tree_vec[ld].depth},
+                    None => {left_depth = 0}
+                }
+                match self.tree_vec[depth_traverser].right {
+                    Some(rd) => {right_depth = self.tree_vec[rd].depth},
+                    None => {right_depth = 0}
+                }
+
+                if left_depth > right_depth {
+                    self.tree_vec[depth_traverser].depth = left_depth+1;
+                } else {
+                    self.tree_vec[depth_traverser].depth = right_depth+1;
+                }
+
                 match self.tree_vec[depth_traverser].parent {
                     Some(d) => {
-                        match self.tree_vec[d].left {
-                            Some(ld) => {left_depth = ld},
-                            None => {left_depth = 0}
-                        }
-                        match self.tree_vec[d].right {
-                            Some(rd) => {right_depth = rd},
-                            None => {right_depth = 0}
-                        }
-
-                        if left_depth > right_depth {
-                            self.tree_vec[d].depth = left_depth+1;
-                        } else {
-                            self.tree_vec[d].depth = right_depth+1;
-                        }
-                        
                         depth_traverser = d;
                     },
                     None => { break }
@@ -221,27 +222,28 @@ impl RangeTree
             self.tree_vec[old_root].parent = Some(new_root);
             
             //Now adjust depth numbers all the way up
-            let mut depth_traverser = i;
+            let mut depth_traverser = old_root;
             loop {
                 let left_depth: usize;
                 let right_depth: usize;
+
+                match self.tree_vec[depth_traverser].left {
+                    Some(ld) => {left_depth = self.tree_vec[ld].depth},
+                    None => {left_depth = 0}
+                }
+                match self.tree_vec[depth_traverser].right {
+                    Some(rd) => {right_depth = self.tree_vec[rd].depth},
+                    None => {right_depth = 0}
+                }
+
+                if left_depth > right_depth {
+                    self.tree_vec[depth_traverser].depth = left_depth+1;
+                } else {
+                    self.tree_vec[depth_traverser].depth = right_depth+1;
+                }
+
                 match self.tree_vec[depth_traverser].parent {
                     Some(d) => {
-                        match self.tree_vec[d].left {
-                            Some(ld) => {left_depth = ld},
-                            None => {left_depth = 0}
-                        }
-                        match self.tree_vec[d].right {
-                            Some(rd) => {right_depth = rd},
-                            None => {right_depth = 0}
-                        }
-
-                        if left_depth > right_depth {
-                            self.tree_vec[d].depth = left_depth+1;
-                        } else {
-                            self.tree_vec[d].depth = right_depth+1;
-                        }
-                        
                         depth_traverser = d;
                     },
                     None => { break }
@@ -276,7 +278,6 @@ impl RangeTree
                             traverser = ln;
                         },
                         None => {
-                            println!("We reached a split, tried to go left, but nothing is on the left");
                             //This is a repeat packet on a completed interval and can be quietly ignored
                             break;
                         }
@@ -287,7 +288,6 @@ impl RangeTree
                             traverser = rn;
                         },
                         None => {
-                            println!("We reached a split, tried to go right, but nothing is on the right");
                             //This is a repeat packet on a completed interval and can be quietly ignored
                             break;
                         }
@@ -369,20 +369,8 @@ impl RangeTree
                         }
 
                         if left_depth > right_depth+1 || right_depth > left_depth+1 {
-                            println!("We have a chance to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
-                            let troot = self.balance(depth_traverser);
-                            match self.tree_vec[troot].left {
-                                Some(ld) => {println!("Left {:?}",self.tree_vec[ld].depth)},
-                                None => {println!("Left is 0")}
-                            }
-                            match self.tree_vec[troot].right {
-                                Some(rd) => {println!("Right {:?}",self.tree_vec[rd].depth)},
-                                None => {println!("Right is 0")}
-                            }
-                        } else {
-                            //println!("Nah, no need to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
+                            self.balance(depth_traverser);
                         }
-
                         match parent {
                             Some(d) => {
                                 depth_traverser = d;
@@ -391,11 +379,9 @@ impl RangeTree
                         }
                     }
 
-
                     break;
                 } else {
-                    //We are at an interval, but the packet does not fall within the interval
-                    //This can be quiety ignored, and may happen
+                    //We are at an interval, but the packet does not fall within the interval, This can be quiety ignored, and may happen
                     break;
                 }
             }
