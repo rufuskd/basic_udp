@@ -67,7 +67,7 @@ impl RangeTree
         self.intervals.insert(0);
     }
 
-    pub fn balance(&mut self, i: usize) {
+    pub fn balance(&mut self, i: usize) -> usize{
         let old_root: usize = i;
         let new_root: usize;
         let replaced_child: Option<usize>;
@@ -91,7 +91,7 @@ impl RangeTree
                 },
                 None => {
                     println!("Attempting to balance favoring a node that doesn't exist!");
-                    return
+                    return i
                 }
             }
             let parent = self.tree_vec[old_root].parent;
@@ -137,7 +137,35 @@ impl RangeTree
             self.tree_vec[old_root].parent = Some(new_root);
             
             //Update the depths accordingly at the operative nodes, and then all the way up
+            //Now adjust depth numbers all the way up
+            let mut depth_traverser = i;
+            loop {
+                let left_depth: usize;
+                let right_depth: usize;
+                match self.tree_vec[depth_traverser].parent {
+                    Some(d) => {
+                        match self.tree_vec[d].left {
+                            Some(ld) => {left_depth = ld},
+                            None => {left_depth = 0}
+                        }
+                        match self.tree_vec[d].right {
+                            Some(rd) => {right_depth = rd},
+                            None => {right_depth = 0}
+                        }
 
+                        if left_depth > right_depth {
+                            self.tree_vec[d].depth = left_depth+1;
+                        } else {
+                            self.tree_vec[d].depth = right_depth+1;
+                        }
+                        
+                        depth_traverser = d;
+                    },
+                    None => { break }
+                }
+            }
+            
+            return new_root
         } else if left_depth < right_depth {
             //Shrug left case
             //Obtain all relevant node indexes
@@ -147,7 +175,7 @@ impl RangeTree
                 },
                 None => {
                     println!("Attempting to balance favoring a node that doesn't exist!");
-                    return
+                    return i
                 }
             }
             let parent = self.tree_vec[old_root].parent;
@@ -219,7 +247,10 @@ impl RangeTree
                     None => { break }
                 }
             }
+            return new_root
         }
+
+        i
     }
 
     //Check a packet, traverse and make new stuff as needed
@@ -339,7 +370,15 @@ impl RangeTree
 
                         if left_depth > right_depth+1 || right_depth > left_depth+1 {
                             println!("We have a chance to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
-                            self.balance(depth_traverser);
+                            let troot = self.balance(depth_traverser);
+                            match self.tree_vec[troot].left {
+                                Some(ld) => {println!("Left {:?}",self.tree_vec[ld].depth)},
+                                None => {println!("Left is 0")}
+                            }
+                            match self.tree_vec[troot].right {
+                                Some(rd) => {println!("Right {:?}",self.tree_vec[rd].depth)},
+                                None => {println!("Right is 0")}
+                            }
                         } else {
                             //println!("Nah, no need to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
                         }
