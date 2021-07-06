@@ -398,6 +398,7 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
                     for byte in &recv_buffer[8..br] {
                         chunk_vector[chunkdex as usize].push(*byte);
                     }
+                    
                 }
                 else { }
             },

@@ -59,6 +59,7 @@ impl RangeTree
     pub fn reinit(&mut self, start: usize, end: usize) {
         self.tree_vec.clear();
         let rootnode: Node = Node::new(None,start,end);
+        self.root = 0;
         self.tree_vec.push(rootnode);
         self.intervals.clear();
         self.intervals.insert(0);
@@ -244,7 +245,8 @@ impl RangeTree
                     //We're good to proceed!
                 },
                 None => {
-                    println!("Somehow attempted to traverse to a non-existent node!");
+                    println!("Somehow attempted to traverse to a non-existent node {:?}",traverser);
+                    println!("Root's got {:?} {:?}",self.tree_vec[self.root].start,self.tree_vec[self.root].end);
                     break;
                 }
             }
