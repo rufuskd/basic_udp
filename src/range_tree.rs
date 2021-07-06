@@ -133,27 +133,6 @@ impl RangeTree
             }
 
             self.tree_vec[old_root].parent = Some(new_root);
- 
-            //Just need to fix the depth numbers on the old root, the new root will still be right
-            let old_root_left_depth: usize;
-            let old_root_right_depth: usize;
-
-            match self.tree_vec[old_root].left {
-                Some(ld) => {old_root_left_depth = self.tree_vec[ld].depth},
-                None => {old_root_left_depth = 0}
-            }
-            match self.tree_vec[old_root].right {
-                Some(rd) => {old_root_right_depth = self.tree_vec[rd].depth},
-                None => {old_root_right_depth = 0}
-            }
-
-            if old_root_left_depth > old_root_right_depth {
-                self.tree_vec[old_root].depth = old_root_left_depth+1;
-            } else {
-                self.tree_vec[old_root].depth = old_root_right_depth+1;
-            }
-
-            return new_root
 
         } else if left_depth < right_depth {
             //Shrug left case
@@ -209,29 +188,30 @@ impl RangeTree
 
             self.tree_vec[old_root].parent = Some(new_root);
 
-            //Just need to fix the depth numbers on the old root, the new root will still be right
-            let old_root_left_depth: usize;
-            let old_root_right_depth: usize;
-
-            match self.tree_vec[old_root].left {
-                Some(ld) => {old_root_left_depth = self.tree_vec[ld].depth},
-                None => {old_root_left_depth = 0}
-            }
-            match self.tree_vec[old_root].right {
-                Some(rd) => {old_root_right_depth = self.tree_vec[rd].depth},
-                None => {old_root_right_depth = 0}
-            }
-
-            if old_root_left_depth > old_root_right_depth {
-                self.tree_vec[old_root].depth = old_root_left_depth+1;
-            } else {
-                self.tree_vec[old_root].depth = old_root_right_depth+1;
-            }
-
-            return new_root
+        } else {
+            new_root = i;
         }
 
-        i
+        //Just need to fix the depth numbers on the old root, the new root will still be correct
+        let old_root_left_depth: usize;
+        let old_root_right_depth: usize;
+
+        match self.tree_vec[old_root].left {
+            Some(ld) => {old_root_left_depth = self.tree_vec[ld].depth},
+            None => {old_root_left_depth = 0}
+        }
+        match self.tree_vec[old_root].right {
+            Some(rd) => {old_root_right_depth = self.tree_vec[rd].depth},
+            None => {old_root_right_depth = 0}
+        }
+
+        if old_root_left_depth > old_root_right_depth {
+            self.tree_vec[old_root].depth = old_root_left_depth+1;
+        } else {
+            self.tree_vec[old_root].depth = old_root_right_depth+1;
+        }
+
+        new_root
     }
 
     //Check a packet, traverse and make new stuff as needed
