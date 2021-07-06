@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-pub struct Node
-{
+pub struct Node {
     pub start: usize,
     pub end: usize,
     parent: Option<usize>,
@@ -11,8 +10,7 @@ pub struct Node
     depth: usize,
 }
 
-impl Node
-{
+impl Node {
     fn new(parent: Option<usize>, start: usize, end: usize) -> Self {
         Self {
             start,
@@ -35,8 +33,7 @@ impl fmt::Debug for Node {
 }
 
 #[derive(Debug)]
-pub struct RangeTree
-{
+pub struct RangeTree {
     pub root: usize,
     pub intervals: HashSet<usize>,
     pub tree_vec: Vec<Node>,
@@ -135,38 +132,28 @@ impl RangeTree
             }
 
             self.tree_vec[old_root].parent = Some(new_root);
-            
-            //Update the depths accordingly at the operative nodes, and then all the way up
-            //Now adjust depth numbers all the way up
-            let mut depth_traverser = old_root;
-            loop {
-                let left_depth: usize;
-                let right_depth: usize;
+ 
+            //Just need to fix the depth numbers on the old root, the new root will still be right
+            let old_root_left_depth: usize;
+            let old_root_right_depth: usize;
 
-                match self.tree_vec[depth_traverser].left {
-                    Some(ld) => {left_depth = self.tree_vec[ld].depth},
-                    None => {left_depth = 0}
-                }
-                match self.tree_vec[depth_traverser].right {
-                    Some(rd) => {right_depth = self.tree_vec[rd].depth},
-                    None => {right_depth = 0}
-                }
-
-                if left_depth > right_depth {
-                    self.tree_vec[depth_traverser].depth = left_depth+1;
-                } else {
-                    self.tree_vec[depth_traverser].depth = right_depth+1;
-                }
-
-                match self.tree_vec[depth_traverser].parent {
-                    Some(d) => {
-                        depth_traverser = d;
-                    },
-                    None => { break }
-                }
+            match self.tree_vec[old_root].left {
+                Some(ld) => {old_root_left_depth = self.tree_vec[ld].depth},
+                None => {old_root_left_depth = 0}
             }
-            
+            match self.tree_vec[old_root].right {
+                Some(rd) => {old_root_right_depth = self.tree_vec[rd].depth},
+                None => {old_root_right_depth = 0}
+            }
+
+            if old_root_left_depth > old_root_right_depth {
+                self.tree_vec[old_root].depth = old_root_left_depth+1;
+            } else {
+                self.tree_vec[old_root].depth = old_root_right_depth+1;
+            }
+
             return new_root
+
         } else if left_depth < right_depth {
             //Shrug left case
             //Obtain all relevant node indexes
@@ -220,35 +207,26 @@ impl RangeTree
             }
 
             self.tree_vec[old_root].parent = Some(new_root);
-            
-            //Now adjust depth numbers all the way up
-            let mut depth_traverser = old_root;
-            loop {
-                let left_depth: usize;
-                let right_depth: usize;
 
-                match self.tree_vec[depth_traverser].left {
-                    Some(ld) => {left_depth = self.tree_vec[ld].depth},
-                    None => {left_depth = 0}
-                }
-                match self.tree_vec[depth_traverser].right {
-                    Some(rd) => {right_depth = self.tree_vec[rd].depth},
-                    None => {right_depth = 0}
-                }
+            //Just need to fix the depth numbers on the old root, the new root will still be right
+            let old_root_left_depth: usize;
+            let old_root_right_depth: usize;
 
-                if left_depth > right_depth {
-                    self.tree_vec[depth_traverser].depth = left_depth+1;
-                } else {
-                    self.tree_vec[depth_traverser].depth = right_depth+1;
-                }
-
-                match self.tree_vec[depth_traverser].parent {
-                    Some(d) => {
-                        depth_traverser = d;
-                    },
-                    None => { break }
-                }
+            match self.tree_vec[old_root].left {
+                Some(ld) => {old_root_left_depth = self.tree_vec[ld].depth},
+                None => {old_root_left_depth = 0}
             }
+            match self.tree_vec[old_root].right {
+                Some(rd) => {old_root_right_depth = self.tree_vec[rd].depth},
+                None => {old_root_right_depth = 0}
+            }
+
+            if old_root_left_depth > old_root_right_depth {
+                self.tree_vec[old_root].depth = old_root_left_depth+1;
+            } else {
+                self.tree_vec[old_root].depth = old_root_right_depth+1;
+            }
+
             return new_root
         }
 
@@ -314,7 +292,7 @@ impl RangeTree
                     self.tree_vec[traverser].end = index;
                     
                     //Push a left and right node for the split
-                    self.tree_vec[traverser].depth += 1;
+                    //self.tree_vec[traverser].depth += 1;
 
                     self.tree_vec[traverser].left = Some(self.tree_vec.len());
                     self.intervals.insert(self.tree_vec.len());
@@ -324,35 +302,7 @@ impl RangeTree
                     self.intervals.insert(self.tree_vec.len());
                     self.tree_vec.push(Node::new(Some(traverser),index+1,highside));
 
-                    //Now adjust depth numbers all the way up
-                    let mut depth_traverser = traverser;
-                    loop {
-                        let left_depth: usize;
-                        let right_depth: usize;
-                        match self.tree_vec[depth_traverser].left {
-                            Some(ld) => {left_depth = self.tree_vec[ld].depth},
-                            None => {left_depth = 0}
-                        }
-                        match self.tree_vec[depth_traverser].right {
-                            Some(rd) => {right_depth = self.tree_vec[rd].depth},
-                            None => {right_depth = 0}
-                        }
-
-                        if left_depth > right_depth {
-                            self.tree_vec[depth_traverser].depth = left_depth+1;
-                        } else {
-                            self.tree_vec[depth_traverser].depth = right_depth+1;
-                        }
-
-                        match self.tree_vec[depth_traverser].parent {
-                            Some(d) => {
-                                depth_traverser = d;
-                            },
-                            None => { break }
-                        }
-                    }
-
-                    //Now check for rebalance opportunities all the way up
+                    //Now adjust depths and check for rebalance opportunities all the way up
                     let mut depth_traverser = traverser;
                     loop {
                         let left_depth: usize;
@@ -368,7 +318,23 @@ impl RangeTree
                             None => {right_depth = 0}
                         }
 
+                        if left_depth > right_depth {
+                            self.tree_vec[depth_traverser].depth = left_depth+1;
+                        } else {
+                            self.tree_vec[depth_traverser].depth = right_depth+1;
+                        }
+
                         if left_depth > right_depth+1 || right_depth > left_depth+1 {
+                            /*println!("We have a chance to rebalance - Left: {:?} Right: {:?}",left_depth,right_depth);
+                            let troot = self.balance(depth_traverser);
+                            match self.tree_vec[troot].left {
+                                Some(ld) => {println!("Left {:?}",self.tree_vec[ld].depth)},
+                                None => {println!("Left is 0")}
+                            }
+                            match self.tree_vec[troot].right {
+                                Some(rd) => {println!("Right {:?}",self.tree_vec[rd].depth)},
+                                None => {println!("Right is 0")}
+                            }*/
                             self.balance(depth_traverser);
                         }
                         match parent {
