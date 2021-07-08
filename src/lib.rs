@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use range_tree::RangeTree;
+use openssl::symm::{encrypt, decrypt, Cipher};
 
 //Constants defining internal behavior
 ///Starting out with 512 byte packets
@@ -286,6 +287,27 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
     let mut send_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     let mut recv_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     let mut outfile = File::create(outfilename)?;
+
+
+    //Create a key from /dev/urandom
+    let mut rand_file = File::open("/dev/urandom").unwrap();
+    let mut key_buf = [0u8; 32];
+    let mut iv = [0u8; 16];
+    rand_file.read_exact(&mut key_buf).unwrap();
+    rand_file.read_exact(&mut iv).unwrap();
+    println!("We have a key {:?}",key_buf);
+    let cipher = Cipher::aes_256_cbc();
+    let data = b"SMH Head";
+    let ciphertext = encrypt(cipher,&key_buf,Some(&iv),data).unwrap();
+    println!("Encrypted text: {:?}",ciphertext);
+
+
+    let plaintext = decrypt(
+        cipher,
+        &key_buf[..],
+        Some(&iv[..]),
+        &ciphertext[..]).unwrap();
+    println!("Unencrypts to: {:?}",plaintext.bytes());
 
     //Bind our socket locally to any available port, this is an outbound request
     match UdpSocket::bind("0.0.0.0:0")
