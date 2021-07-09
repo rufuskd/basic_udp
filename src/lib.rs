@@ -20,6 +20,7 @@ use openssl::symm::{encrypt, decrypt, Cipher};
 ///All packets are made using these two variables
 const PACKET_SIZE: usize = 512;
 const BUFFER_SIZE: usize = PACKET_SIZE - mem::size_of::<u64>();
+const CHUNK_PAYLOAD_SIZE: usize = BUFFER_SIZE - mem::size_of::<u64>();
 
 ///Struct representing a request for data chunks
 ///
@@ -164,27 +165,30 @@ pub fn server_service_transaction(t: &mut ChunkTransaction, socket: &mut UdpSock
     } else {
         
         let mut file = File::open(&t.filename)?;
-        let mut buffer: [u8;BUFFER_SIZE] = [0; BUFFER_SIZE];
+        let mut buffer: [u8;CHUNK_PAYLOAD_SIZE] = [0; CHUNK_PAYLOAD_SIZE];
         //Look through all requested chunks and grab em
         for it in t.starts.iter().zip(t.ends.iter()) {
             let (s,e) = it;
-            file.seek(SeekFrom::Start(*s*(BUFFER_SIZE as u64)))?;
+            file.seek(SeekFrom::Start(*s*(CHUNK_PAYLOAD_SIZE as u64)))?;
             //iterate from 0 to *e, make a packet and send it
             for i in 0..(*e-*s)+1{
-                file.seek(SeekFrom::Start((*s+i)*(BUFFER_SIZE as u64)))?;
+                file.seek(SeekFrom::Start((*s+i)*(CHUNK_PAYLOAD_SIZE as u64)))?;
                 let bytes_read = file.read(&mut buffer)?;
                 if bytes_read == 0 {
                     println!("A WE FOUND IT");
                     break;
                 }
                 //Data is ready, put it in a buffer
+                let mut byte_counter: usize = 0;
                 let mut packet_buffer: [u8;PACKET_SIZE] = [0; PACKET_SIZE];
                 //Starting simple, just unencrypted chunks
-                let chunknum = pack_u64_into_u8arr(*s+i);
-
+                //Pack the id into the packet buffer
+                for byte in pack_u64_into_u8arr(1).iter(){
+                    packet_buffer[byte_counter] = *byte;
+                    byte_counter+=1;
+                }
                 //Pack the chunknum into the packet buffer
-                let mut byte_counter: usize = 0;
-                for byte in chunknum.iter(){
+                for byte in pack_u64_into_u8arr(*s+i).iter(){
                     packet_buffer[byte_counter] = *byte;
                     byte_counter+=1;
                 }
@@ -288,27 +292,6 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
     let mut recv_buffer: [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     let mut outfile = File::create(outfilename)?;
 
-
-    //Create a key from /dev/urandom
-    let mut rand_file = File::open("/dev/urandom").unwrap();
-    let mut key_buf = [0u8; 32];
-    let mut iv = [0u8; 16];
-    rand_file.read_exact(&mut key_buf).unwrap();
-    rand_file.read_exact(&mut iv).unwrap();
-    println!("We have a key {:?}",key_buf);
-    let cipher = Cipher::aes_256_cbc();
-    let data = b"SMH Head";
-    let ciphertext = encrypt(cipher,&key_buf,Some(&iv),data).unwrap();
-    println!("Encrypted text: {:?}",ciphertext);
-
-
-    let plaintext = decrypt(
-        cipher,
-        &key_buf[..],
-        Some(&iv[..]),
-        &ciphertext[..]).unwrap();
-    println!("Unencrypts to: {:?}",plaintext.bytes());
-
     //Bind our socket locally to any available port, this is an outbound request
     match UdpSocket::bind("0.0.0.0:0")
     {
@@ -328,7 +311,6 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
         }
     }
 
-
     //GOOD, this method handles repeating requests in a reasonable timeframe
     match client_request_metadata(&server_socket, &mut send_buffer, &mut recv_buffer, &target, &filename) {
         Ok(_) => {
@@ -341,7 +323,6 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
     }
 
     
-    //We don't care about the ID field of the returned metadata packet yet TODO
     let chunk_count = unpack_u8arr_into_u64(&recv_buffer[8..16]); //Metadata requests pass back the chunk count as a u64 in bytes 8-16
     println!("Chunks count {:?}",chunk_count);
     if chunk_count == 0 {
@@ -384,12 +365,6 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
                     match server_socket.send_to(&send_buffer[0..bytes_to_send], target)
                     {
                         Ok(_) => {
-                            if next {
-                                //println!("Sent a packet due to nexting");
-                            } else {
-                                //println!("Sent a packet due to timeout");
-                            }
-                            
                             counter = Instant::now();
                         },
                         Err(e) => {
@@ -409,20 +384,19 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
         {
             //We either get the next packet, miss a packet, or a latecomer arrives
             Ok(br) => {
-                let mut chunkdex = unpack_u8arr_into_u64(&recv_buffer[0..8]);
-                rt.add_packet(chunkdex as usize);
-                //println!("Got a chunk: {:?}", chunkdex);
-                if chunkdex >= part_start {
-                    chunkdex -= part_start;
-                    //println!("And now chunkdex is this {:?}",chunkdex);
-                    //Nailed it, got a chunk
-                    counter = Instant::now();
-                    for byte in &recv_buffer[8..br] {
-                        chunk_vector[chunkdex as usize].push(*byte);
+                if unpack_u8arr_into_u64(&recv_buffer[0..8]) == 1 {
+                    let mut chunkdex = unpack_u8arr_into_u64(&recv_buffer[8..16]);
+                    rt.add_packet(chunkdex as usize);
+                    if chunkdex >= part_start {
+                        chunkdex -= part_start;
+                        counter = Instant::now();
+                        for byte in &recv_buffer[16..br] {
+                            chunk_vector[chunkdex as usize].push(*byte);
+                        }
+                        
                     }
-                    
                 }
-                else { }
+                
             },
             Err(err) => match err.kind() {
                 io::ErrorKind::WouldBlock => {},
@@ -464,34 +438,16 @@ pub fn client_request_sequential_limited(target: &String, filename: &String, out
     Ok(())
 }
 
-///Populates a given send buffer with the necessary fields to request metadata for file with name fname, returns how many bytes are in the packet
-pub fn metadata_request_packet(fname: &String, buffer: &mut[u8; PACKET_SIZE]) -> usize {
-    let mut byte_counter: usize = 0;
-    //Request metadata, ID field of 0
-    for byte in pack_u64_into_u8arr(0).iter(){
-        buffer[byte_counter] = *byte;
-        byte_counter+=1;
-    }
-
-    buffer[byte_counter] = fname.len() as u8;
-    byte_counter+=1;
-
-    for byte in fname.bytes(){
-        buffer[byte_counter] = byte;
-        byte_counter+=1;
-    }
-    
-    byte_counter
-}
 
 pub fn metadata_response_packet(filename: &String, buffer: &mut[u8;PACKET_SIZE]) -> usize {
     let filesize: u64;
+    
     match fs::metadata(filename) {
         Ok(m) => {
-            if m.len() % (BUFFER_SIZE as u64) == 0{
-                filesize = m.len()/(BUFFER_SIZE as u64);
+            if m.len() % (CHUNK_PAYLOAD_SIZE as u64) == 0{
+                filesize = m.len()/(CHUNK_PAYLOAD_SIZE as u64);
             } else {
-                filesize = 1+m.len()/(BUFFER_SIZE as u64);
+                filesize = 1+m.len()/(CHUNK_PAYLOAD_SIZE as u64);
             }
             
             println!("File {:?} found!",filename)
@@ -538,7 +494,11 @@ pub fn client_request_metadata(server_socket: &UdpSocket ,send_buffer: &mut[u8;P
     {
         match server_socket.recv(&mut recv_buffer[..])
         {
-            Ok(_) => { return Ok(()) },
+            Ok(_) => {
+                if unpack_u8arr_into_u64(&recv_buffer[0..8]) == 0{
+                    return Ok(());
+                }
+            },
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => { },
                 _ => return Err(e),
@@ -564,6 +524,25 @@ pub fn client_request_metadata(server_socket: &UdpSocket ,send_buffer: &mut[u8;P
     }
 }
 
+///Populates a given send buffer with the necessary fields to request metadata for file with name fname, returns how many bytes are in the packet
+pub fn metadata_request_packet(fname: &String, buffer: &mut[u8; PACKET_SIZE]) -> usize {
+    let mut byte_counter: usize = 0;
+    //Request metadata, ID field of 0
+    for byte in pack_u64_into_u8arr(0).iter(){
+        buffer[byte_counter] = *byte;
+        byte_counter+=1;
+    }
+
+    buffer[byte_counter] = fname.len() as u8;
+    byte_counter+=1;
+
+    for byte in fname.bytes(){
+        buffer[byte_counter] = byte;
+        byte_counter+=1;
+    }
+    
+    byte_counter
+}
 
 /// Populates a given send buffer with the necessary field to request chunks of a file with name fname, returns how many bytes are in the packet
 pub fn range_chunk_request_packet(fname: &String, starts: Vec<u64>, ends: Vec<u64>, send_buffer: &mut[u8; PACKET_SIZE]) -> usize {
@@ -574,17 +553,14 @@ pub fn range_chunk_request_packet(fname: &String, starts: Vec<u64>, ends: Vec<u6
         send_buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-
     //Length of file name
     send_buffer[byte_counter] = fname.len() as u8;
     byte_counter+=1;
-
     //The actual filename
     for byte in fname.bytes(){
         send_buffer[byte_counter] = byte;
         byte_counter+=1;
     }
-
     //How many chunk ranges?  The min of how many fit and how many are requested
     let desired_chunks = starts.len() as u64;
     let fittable_chunks = ((PACKET_SIZE - byte_counter)/(2*mem::size_of::<u64>())) as u64;
@@ -594,12 +570,10 @@ pub fn range_chunk_request_packet(fname: &String, starts: Vec<u64>, ends: Vec<u6
     } else {
         actual_chunks = fittable_chunks;
     }
-    
     for byte in &pack_u64_into_u8arr(actual_chunks){
         send_buffer[byte_counter] = *byte;
         byte_counter+=1;
     }
-
     //Pack each chunk range
     for it in starts[0..actual_chunks as usize].iter().zip(ends[0..actual_chunks as usize].iter()) {
         let (s,e) = it;
